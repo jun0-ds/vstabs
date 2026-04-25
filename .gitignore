@@ -1,0 +1,29 @@
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Local config / secrets
+.env
+.env.local
+projects.local.json
+
+# AHK prototype build artifacts
+*.exe
+prototype/build/
+
+# lib-x (per-repo logs are local-only)
+.claude/lib-x/
