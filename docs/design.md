@@ -1,79 +1,102 @@
 # vstabs design
 
+> **Status:** v0.1 architecture (rev 2, 2026-04-30 — full rewrite after spike journey)
+> **Decision trail:** [`decisions/`](decisions/) — read in date order
+> **Narrative of how we got here:** [`journal/2026-04-30-prior-art-deep-dive.md`](journal/2026-04-30-prior-art-deep-dive.md)
+
+This document is the canonical architecture. Earlier revisions of `design.md` (sibling tab bar, container reparent, etc.) were *hypothesized* designs that did not survive spikes; they are not preserved here. The decision ADRs preserve them for history.
+
 ## Problem statement
 
-Desktop VS Code has no L1 project tab bar. When working across multiple projects (some local, some WSL, some SSH), each becomes a separate VS Code window. The OS taskbar groups them under one icon but offers no project-level visual hierarchy, no environment differentiation, and no fast switching by project name.
+Desktop VS Code on Windows follows the rule **"1 window = 1 workspace"**. When working across multiple projects (some local, some WSL, some SSH), each becomes a separate VS Code window. The OS taskbar groups them under one icon but offers no project-level visual hierarchy, no environment differentiation, and no fast switching by project name.
 
-Multi-root workspaces don't solve this — they merge all folders into one workspace, sharing search/LSP/terminal scope, which defeats the goal of independent project contexts.
+This is not a VS Code shortcoming — it's a Windows OS limit. The same problem exists in JetBrains, Zed, Cursor, Windsurf, and Fleet **on Windows**. macOS solves it for free via NSWindow tabbing (System API since Sierra 2016), so JetBrains and Zed have it on Mac via `Window | Merge All Project Windows` and `use_system_window_tabs`. Microsoft tried to add the equivalent ("Sets", 2018) and cancelled it in 2019. The most-upvoted VS Code issue ever ([#153826](https://github.com/microsoft/vscode/issues/153826)) is 7 years unresolved on this same point.
+
+Multi-root workspaces don't solve it — they merge all folders into one workspace, sharing search/LSP/terminal scope, which defeats independent project contexts.
 
 ## Jobs to be done
 
-This design is anchored to six JTBDs:
+Six JTBDs anchor the design. After the spike journey, two are now recognized as **must-have**, the others as **boost**:
 
-1. **Context entry cost ≈ 0** — Returning to a project should restore its full state (handled by VS Code; vstabs only wakes the window).
-2. **Mental model = tool model** — A project is a first-class object (name + path + environment), not a folder path.
-3. **Concurrency + isolation** — Multiple projects alive in parallel; one visible at a time.
-4. **Visual switch map** — All available projects always visible in the tab bar; switching is recognition, not recall.
-5. **Environment as first-class** — local / WSL / SSH visually distinct (color, icon).
-6. **Cognitive offloading** — Tool remembers which projects exist (out of scope: progress/notes — that's lib-x's job, possibly v0.2 integration).
+| # | JTBD | Priority |
+|---|---|---|
+| **2** | Mental model = tool model — a project is a first-class object (name + path + environment), not a folder path | **must-have** |
+| **6** | Cognitive offloading — at the OS layer, vstabs collapses N project windows into 1 visual unit (1 taskbar icon, 1 alt-tab entry) | **must-have** |
+| 4 | Visual switch map — all available projects always visible in a tab bar; switching is recognition, not recall | boost |
+| 5 | Environment as first-class — local / WSL / SSH visually distinct (color, icon) | boost |
+| 1 | Context entry cost ≈ 0 — returning to a project should restore its full state | boost (handled by VS Code; vstabs only wakes the tab) |
+| 3 | Concurrency + isolation — multiple projects alive in parallel, one visible at a time, no cross-project state bleed | boost |
+
+User's verbatim re-articulation (which became the root cause): **"OS 내에서 들여다봐야 할 창의 수를 계층화"** — collapse the count of windows the user has to attend to at the OS level, while keeping each project instantly identifiable.
+
+The metaphor that closed the loop: **"VS Code를 wrapping하는 브라우저처럼"** — a desktop wrapper whose chrome (tab bar) is provided by vstabs and whose content (the editor) is rendered inside, exactly like a browser hosts web pages.
 
 ## Non-goals
 
-- Embedding or modifying VS Code internals (fragile, breaks on updates)
+- Embedding or modifying VS Code internals (rejected — see [`decisions/2026-04-26-reparent-rejected.md`](decisions/2026-04-26-reparent-rejected.md))
 - Replacing VS Code's session state, file management, or extensions
-- Syncing tab state across devices (the project registry is local; sync via dotfiles if needed)
-- Cross-platform parity in v0.x (Windows-first; macOS/Linux is future work)
+- Cross-platform parity in v0.x (Windows-first; macOS already has the OS-level solution via NSWindow tabbing, Linux is future work)
+- Forking VS Code or Chromium (Cursor's depth is not in scope)
 
 ## Architecture
 
 ```
-┌────────────────────────────────────────┐
-│  vstabs (Tauri app, ~5MB native)       │
-│  ┌──────────────────────────────────┐  │
-│  │  Tab bar UI (Svelte/React)       │  │
-│  └──────────────────────────────────┘  │
-│  ┌──────────────────────────────────┐  │
-│  │  Window controller (Win32 API)   │  │
-│  │  - find VS Code windows by title │  │
-│  │  - bring to front / hide         │  │
-│  │  - spawn `code` CLI for new tab  │  │
-│  └──────────────────────────────────┘  │
-│  ┌──────────────────────────────────┐  │
-│  │  Project registry (JSON)         │  │
-│  └──────────────────────────────────┘  │
-└────────────────────────────────────────┘
-              ↕  Win32 (no parent/child reparenting)
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ VS Code #1   │ │ VS Code #2   │ │ VS Code #3   │
-│ (control-    │ │ (sample-app,    │ │ (gpu-dev,    │
-│  tower, WSL) │ │  WSL)        │ │  SSH)        │
-└──────────────┘ └──────────────┘ └──────────────┘
+┌─────────────────────────────────────────────────────────┐  vstabs (Tauri app, ~5 MB)
+│ 🏠 project-main  📊 lib-x  🖥 gpu-dev  +             │  L1 — Tab bar (Tauri UI)
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│         WebView2 (Chromium = system Edge)               │  L2 — Active project
+│         loads http://127.0.0.1:{port-N}                 │     content
+│         backed by per-project code-server instance      │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+        ↑ one OS window = one taskbar icon, one alt-tab entry
 ```
 
-vstabs and VS Code windows are **siblings under the OS**, not parent/child. This avoids Electron reparenting fragility (rendering glitches, focus/IME issues, GPU acceleration loss).
+vstabs is a **single OS window**. Inside it, the Tauri shell hosts a tab bar (web UI rendered by Tauri's primary WebView) plus N additional WebView2 instances — one per registered project — each loading its own code-server backend on a dedicated localhost port. Active tab's WebView is shown; others are hidden but kept alive (warm switch).
 
-## Environment types
+This is not reparenting (which Chromium rejects), not sibling slaving (which leaves two visible frames), not borderless stripping (which leaves VS Code's custom title bar). It is **the wrapping-browser model literally implemented**: container + WebViews + per-page backend.
 
-Three types cover all current cases. Cloud machines (Oracle Cloud, AWS, etc.) reach via Tailscale SSH and register as `ssh` — no separate `cloud` or `web` type needed.
+### Key components
 
-| Type | Launch command |
-|---|---|
-| `local` | `code C:\path` |
-| `wsl` | `code --remote wsl+{distro} /path` |
-| `ssh` | `code --remote ssh-remote+{host} /path` |
+```
+vstabs (Tauri shell, Rust)
+├─ Tab bar UI (Svelte/React in Tauri's primary WebView)
+├─ WebView pool — one WebView2 per active project
+├─ code-server lifecycle manager
+│   ├─ port allocator (free port per project)
+│   ├─ lazy spawn (start on first tab click)
+│   ├─ idle suspend (stop after T minutes of inactivity)
+│   └─ health monitor + auto-restart
+├─ Project registry (JSON, %APPDATA%\vstabs\projects.json)
+└─ Hotkey + tray menu
+```
 
-A `web` type was considered (for code-server / vscode.dev) and rejected:
-- Desktop VS Code over SSH already gives the "remote workspace, local UI" experience without running a separate server
-- Web IDEs break Claude Code IDE integration (no PTY, no local fs)
-- Tailscale SSH covers the multi-device access scenario that web IDEs are usually pitched for
+### code-server backend
+
+For each registered project:
+
+| Project env | code-server location | Folder it opens |
+|---|---|---|
+| `local` | localhost (Windows or WSL) | a Windows or POSIX path |
+| `wsl` | inside the WSL distro | a POSIX path in the distro |
+| `ssh` | on the remote SSH host (or via Remote-SSH from a local code-server) | a POSIX path on the remote |
+
+vstabs does not embed VS Code Desktop; it runs `code-server` instances and opens each in its own WebView2. The user's existing extensions (including Anthropic's Claude Code, verified) install per-instance from the marketplace. Local jsonl session storage (`~/.claude/projects/*.jsonl`) is shared across instances since they read the same path on disk.
+
+### Why WebView2 (not Firefox / Tauri WRY default)
+
+WebView2 = Chromium = Edge engine, bundled with Windows 10 1809+. It uses the OS's native IME (TSF), so Korean/Japanese/Chinese input works natively — verified directly on Chrome, which uses the same engine. Firefox also passed IME but had layout glitches in some chat UI elements during cross-browser verification, so it's not the wrapper choice.
+
+Tauri's default backend on Windows is WebView2, so this is automatic.
 
 ## Project registry
 
-`%APPDATA%\vstabs\projects.json` (or `~/.config/vstabs/projects.json` on POSIX):
+`%APPDATA%\vstabs\projects.json`:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "projects": [
     {
       "id": "project-main",
@@ -83,6 +106,10 @@ A `web` type was considered (for code-server / vscode.dev) and rejected:
       "path": "~/projects/main",
       "color": "#2ea043",
       "icon": "🏠",
+      "code_server": {
+        "spawn_mode": "lazy",
+        "idle_suspend_minutes": 30
+      },
       "order": 0
     },
     {
@@ -93,109 +120,116 @@ A `web` type was considered (for code-server / vscode.dev) and rejected:
       "path": "~/work",
       "color": "#a371f7",
       "icon": "🖥️",
+      "code_server": {
+        "spawn_mode": "lazy",
+        "host_local_or_remote": "remote",
+        "remote_port": 8080
+      },
       "order": 1
-    },
-    {
-      "id": "oracle-cloud",
-      "name": "oracle-arm",
-      "env": "ssh",
-      "ssh_host": "oracle-arm.tail-scale.ts.net",
-      "path": "~/work",
-      "color": "#f59e0b",
-      "icon": "☁️",
-      "order": 2
     }
   ],
   "shortcuts": {
     "global_toggle": "Ctrl+Win+Space",
     "next_project": "Ctrl+Tab",
-    "prev_project": "Ctrl+Shift+Tab"
+    "prev_project": "Ctrl+Shift+Tab",
+    "select_n": "Ctrl+Alt+1..9"
   }
 }
 ```
+
+Two `code_server` placement strategies coexist:
+- **local-host** (default for `local` and `wsl` envs): vstabs spawns a code-server on Windows or inside the WSL distro, allocates a free localhost port, opens the project folder
+- **remote** (for `ssh`): code-server runs on the remote host, vstabs port-forwards via SSH tunnel and points its WebView at `http://127.0.0.1:{forwarded}`
 
 ## Core flow: tab click
 
 ```
 on tab_click(project_id):
-  proj = registry.get(project_id)
-  hwnd = find_vscode_window(proj)
-
-  if hwnd exists:
-    bring_to_front(hwnd)
-  else:
-    cmd = build_code_command(proj)
-    spawn(cmd)
-    wait_for_window(proj, timeout=15s)  # SSH/WSL can be slow
-
-find_vscode_window(proj):
-  # VS Code window title patterns:
-  #   "{folder} - Visual Studio Code"
-  #   "[WSL: Ubuntu] {folder} - Visual Studio Code"
-  #   "[SSH: host] {folder} - Visual Studio Code"
-  pattern = build_title_pattern(proj)
-  return EnumWindows(filter=pattern)
+  registry_entry = registry.get(project_id)
+  cs = code_server_pool.get_or_spawn(registry_entry)
+  webview = webview_pool.get_or_create(project_id, url=cs.url())
+  show(webview); hide(other_webviews)
 ```
+
+```
+code_server_pool.get_or_spawn(entry):
+  if pool[entry.id].alive:
+    pool[entry.id].mark_active()  # reset idle timer
+    return pool[entry.id]
+  port = port_allocator.next_free()
+  cs = spawn_code_server(env=entry.env, path=entry.path, port=port)
+  wait_until_responding(cs.url, timeout=20s)
+  schedule_idle_check(cs, after=entry.code_server.idle_suspend_minutes)
+  pool[entry.id] = cs
+  return cs
+```
+
+WebViews are kept alive across tab switches so VS Code session state (open files, scroll, sidebar) is instantly restored. code-server backends are kept alive while in use and suspended after idle to recover memory.
+
+## Phasing
+
+### v0.0 — AHK prototype (shelved, code preserved)
+Validated the *wrong* model (sibling tab bar). The spike's value was negative: it surfaced that the user wanted "wrapping" not "tabbing on top of separate windows."
+
+### v0.1 spike — Tauri + 2 WebViews + 2 code-server (1–2 days)
+**Last spike** before implementation. Goal: prove the technical core in isolation.
+- Tauri shell with a hand-coded tab bar (2 buttons)
+- Spawn 2 code-server instances on free ports against 2 different folders
+- Show/hide their WebViews on tab click
+- Verify: switch latency, memory, IME, Claude Code panel, lifecycle on close
+
+### v0.1 — Implementation (1 week)
+Once the spike passes:
+- Project registry (JSON, edit via UI in v0.2)
+- Tab bar with color/icon, hotkeys (`Ctrl+Alt+1..9`, `Ctrl+Tab`, `Ctrl+Win+Space`)
+- code-server lifecycle manager (lazy spawn, idle suspend, health, restart)
+- Tray menu, single-instance enforcement
+- Local + WSL backends (SSH deferred to v0.2)
+
+### v0.2 — Polish + remote
+- SSH backend (port-forward + remote code-server)
+- Per-project `--user-data-dir` opt-in for stronger isolation
+- Drag-to-reorder tabs, add/remove via UI
+- Optional lib-x memory tooltip on tab hover
+
+### v0.3+ — Cross-platform
+- macOS: ship as a Tauri app but recommend native `Window | Merge All Project Windows` in JetBrains / Zed if user prefers; vstabs's value on macOS is mainly the local/WSL/SSH unification
+- Linux: defer
 
 ## Risks & mitigations
 
 | Risk | Mitigation |
 |---|---|
-| VS Code window title format changes between versions | Title patterns isolated to a config-driven matcher; version-test on each VS Code release |
-| Two projects with the same folder name collide on title match | Disambiguate via `--user-data-dir` per registered project, track PID alongside title |
-| Remote workspace startup is slow (5–15s) | Show loading spinner on tab; optional "warm pool" (pre-launch idle windows) in v0.2 |
-| Wrapper crash leaves VS Code windows orphaned | Lossless — windows survive independently; relaunching wrapper re-discovers them |
-| User alt-tabs in VS Code, wrapper tab bar doesn't reflect active window | v0.1 is one-way (wrapper → VS Code). Two-way sync via `SetWinEventHook` is v0.2 |
-
-## Phasing
-
-### v0.0 — AHK prototype (1 day)
-
-Goal: Validate the UX before committing to a Tauri build. AutoHotkey v2 can do Win32 window enumeration, hotkeys, and basic GUI in ~200 lines.
-
-- Hardcoded project list
-- Top-of-screen tab bar (tooltip text + click)
-- `code --remote ...` spawn
-- `FindWindow` + `BringWindowToTop` for activation
-
-If after 1 week of using this prototype the UX feels right → proceed to v0.1. If it doesn't → iterate or kill.
-
-### v0.1 — Tauri MVP (1 week)
-
-- Project registry (JSON, edit via UI)
-- Persistent tab bar (always-on-top window)
-- Environment color/icon
-- Hotkeys (`Ctrl+1..9`, `Ctrl+Tab`)
-- Tab reorder (drag), add/remove
-- Single-instance enforcement
-
-### v0.2 — Polish
-
-- Two-way sync (`SetWinEventHook` to track VS Code window focus changes)
-- Tab grouping (e.g., "WSL projects" / "SSH projects")
-- Optional lib-x memory tooltip on tab hover (read `memory/domain/{project}.md`)
-
-### v0.3+ — Cross-platform
-
-- macOS via `NSWorkspace` + Accessibility API
-- Linux via wmctrl / X11 / Wayland (last priority)
+| WebView2 Chromium update breaks Korean IME (Chromium has had M124–M125 regressions) | Pin minimum WebView2 version; smoke test Korean input on each Tauri release |
+| code-server memory cost (~150–300 MB per instance) | Lazy spawn + idle suspend; on a 16 GB laptop, 4–6 concurrent projects is comfortable |
+| code-server lags upstream VS Code | Acceptable — monthly cadence is small lag for a 1-person tool |
+| Microsoft proprietary extensions (Pylance, C#) won't install on code-server | Document known incompatibilities; suggest open-source replacements (basedpyright etc.) |
+| Auth state per code-server instance | Anthropic Claude Code reads `~/.claude/projects/*.jsonl` natively (verified). Other extensions: case by case in v0.2. |
+| WebView pool memory grows with N projects | Recycle WebViews for projects untouched for T hours; recreate on next click (loses session state for that one project) |
 
 ## Tech stack rationale
 
-**Tauri 2.x (Rust + WebView)**
-- ~5MB binary, sub-second startup
-- Native Win32 access via `windows` crate
-- WebView for UI lets us iterate fast on visual design
-- Future cross-platform path is real (Tauri supports all three OSes)
+**Tauri 2.x (Rust + WebView2)**
+- ~5 MB binary, sub-second startup
+- Multi-WebView API (`WebviewWindow` / `Webview`) — direct support for our model
+- WebView2 = Chromium = OS native IME on Windows
+- Future cross-platform path is real (Tauri supports macOS / Linux)
 
-Alternatives considered:
-- **Electron** — 150MB binary, heavy startup. Rejected.
-- **AHK v2** — Perfect for v0.0 prototype, weak for production UI. Used only for prototype.
-- **C# + WinUI** — Windows-only forever. Rejected for cross-platform reasons.
+**code-server (open-source)**
+- VS Code Web, runs as a server process
+- Marketplace compatible (Open VSX + many Microsoft extensions)
+- Native filesystem access on whatever host it runs on (verified for Anthropic Claude Code)
+- Active project, monthly releases tracking VS Code
 
-## Open questions (to resolve before v0.1)
+Alternatives considered and rejected:
+- **Electron wrapping VS Code Desktop** — embedding external native windows in Electron is not supported (electron/electron#10547), confirmed by spike
+- **Native VS Code reparent via Win32 SetParent** — breaks IME / focus / lifetime (spike #1)
+- **AHK sibling tab bar** — leaves N OS windows, fails JTBD #6 (spike v0.0)
+- **VS Code fork** — Cursor/Windsurf depth, infeasible for one person
 
-- Tab bar position: top-of-screen always-on-top vs. dock-able sidebar?
-- Multi-monitor: tab bar on primary monitor only, or per-monitor?
-- Should VS Code windows snap to a specific monitor when activated?
-- Hotkey conflicts with VS Code's own `Ctrl+Tab` — global vs. focused?
+## Open questions (to resolve during v0.1 spike)
+
+- **WebView pool**: hide via CSS, hide via Tauri's `set_visible(false)`, or detach from window tree? Pick the one with lowest re-show latency.
+- **Process lifecycle on app exit**: stop all code-server instances cleanly? Leave them running (faster next launch) and offer a "stop all" tray action?
+- **Hotkey conflicts**: `Ctrl+Tab` clashes with VS Code's editor tab switcher inside the WebView. Global vs focused, or use `Ctrl+Alt+Tab` like the AHK prototype.
+- **Multi-monitor**: vstabs window remembers monitor / size; per-monitor instances?

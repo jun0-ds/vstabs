@@ -1,0 +1,2 @@
+# spike runtime artifacts (logs go to /tmp anyway)
+*.log

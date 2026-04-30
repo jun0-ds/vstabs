@@ -1,0 +1,22 @@
+[package]
+name = "reparent-spike"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[dependencies]
+winit = "0.30"
+raw-window-handle = "0.6"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
