@@ -141,6 +141,22 @@ Two `code_server` placement strategies coexist:
 - **local-host** (default for `local` and `wsl` envs): vstabs spawns a code-server on Windows or inside the WSL distro, allocates a free localhost port, opens the project folder
 - **remote** (for `ssh`): code-server runs on the remote host, vstabs port-forwards via SSH tunnel and points its WebView at `http://127.0.0.1:{forwarded}`
 
+### Ops topology assumption (single source of truth)
+
+vstabs assumes the operations topology described in
+`ops-config/docs/architecture.md` (private repo). Summary:
+
+- All SSH transport rides Tailscale; external SSH ports are firewall-closed
+- The user's primary work environment is a Windows laptop running vstabs as a
+  Tauri desktop app; remote hosts are vstabs tabs reachable through the tailnet
+- Public domains are reserved for end-user services (Cloudflare Workers);
+  development surfaces (vscode-server / code-server / SSH) are never publicly
+  exposed
+
+vstabs depends on this model for the SSH backend default below to make sense.
+If you are deploying vstabs in a different topology (e.g., team setup with
+SAML SSO and public domains), revisit this section first.
+
 ### SSH backend security model (v0.2 default)
 
 For personal-use deployments (e.g., Oracle Cloud Free Tier + Tailscale), vstabs enforces a strict tunnel-only model:
