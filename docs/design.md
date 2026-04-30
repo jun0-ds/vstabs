@@ -141,6 +141,16 @@ Two `code_server` placement strategies coexist:
 - **local-host** (default for `local` and `wsl` envs): vstabs spawns a code-server on Windows or inside the WSL distro, allocates a free localhost port, opens the project folder
 - **remote** (for `ssh`): code-server runs on the remote host, vstabs port-forwards via SSH tunnel and points its WebView at `http://127.0.0.1:{forwarded}`
 
+### SSH backend security model (v0.2 default)
+
+For personal-use deployments (e.g., Oracle Cloud Free Tier + Tailscale), vstabs enforces a strict tunnel-only model:
+
+- **Remote code-server binds 127.0.0.1 only** — never `0.0.0.0`. Already true of the spawn command vstabs uses; the SSH backend will preserve this when spawning remotely.
+- **No public domain exposure** — Cloudflare-tunneled or LB-fronted code-server URLs are an instant data-leak vector (anyone who guesses or scrapes the URL gets full editor + filesystem access). vstabs will not generate or recommend such configurations.
+- **Connection path is SSH local port forward only** — vstabs runs an SSH client locally, opens `-L {local_port}:127.0.0.1:{remote_port}`, points its WebView at `http://127.0.0.1:{local_port}`. The remote port is never reachable from the public internet.
+- **Tailscale assumed for SSH transport** — the SSH host alias resolves through the user's tailnet, and the remote host has its public SSH port closed at the OS firewall level. vstabs does not implement this; it documents the assumption.
+- **An "MCP-only external expose" alternative model** was floated in user discussion but is out of vstabs scope, since vstabs unifies the entire VS Code editor surface, not just MCP endpoints.
+
 ## Core flow: tab click
 
 ```
