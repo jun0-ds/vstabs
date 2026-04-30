@@ -72,6 +72,33 @@ bash ~/project-main/vstabs/spike/v0.1-iframe-tab/start-code-servers.sh
 The fallback path in `app.js` reads from `ui/projects.js` when `window.__TAURI__`
 is absent.
 
+## Cross-compile from WSL/Linux to Windows (advanced)
+
+You don't need a Windows toolchain on your laptop — WSL can produce the
+final `vstabs.exe`. This is what the maintainer uses for one-shot
+distribution after working entirely in WSL.
+
+```bash
+# One-time setup
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin
+sudo apt install -y llvm clang lld
+sudo ln -sf /usr/bin/clang /usr/local/bin/clang-cl   # cargo-xwin expects this name
+
+# Build
+cd src-tauri
+RC=llvm-rc cargo xwin build --target x86_64-pc-windows-msvc --release
+# Output: target/x86_64-pc-windows-msvc/release/vstabs.exe (~3 MB)
+```
+
+Notes:
+- First build downloads the MSVC SDK to `~/.cache/cargo-xwin/` (~500 MB)
+- `RC=llvm-rc` is required — `tauri-winres` looks for an `rc` named exactly that
+- Icons in `src-tauri/icons/` must be 32-bit RGBA PNG; the included `icon.ico`
+  is generated from a 128×128 RGBA source and includes 16/32/48/64/128 sub-images
+- The resulting `.exe` is a regular Tauri Windows app — copy to a Windows
+  filesystem and double-click. WebView2 runtime ships with Windows 10 1809+
+
 ## Linux build is for dev iteration only
 
 A Linux build (`cargo tauri build` inside WSL) compiles fine and uses

@@ -79,9 +79,8 @@ fn spawn_wsl(distro: &str, port: u16, folder: &str) -> std::io::Result<Child> {
         .stderr(Stdio::null());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         // CREATE_NO_WINDOW = 0x08000000 — prevent flashing console.
-        cmd.creation_flags(0x08000000);
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x08000000);
     }
     cmd.spawn()
 }
@@ -107,8 +106,7 @@ fn spawn_local(port: u16, folder: &str) -> std::io::Result<Child> {
     .stderr(Stdio::null());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x08000000);
     }
     cmd.spawn()
 }
