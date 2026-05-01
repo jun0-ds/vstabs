@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Start two code-server instances for vstabs v0.1 iframe spike.
+# Edit PROJECT_A / PROJECT_B to point at folders you actually have.
 set -euo pipefail
 
-PROJECT_A="${HOME}/project-main"
-PROJECT_B="${HOME}/project-main/vstabs"
+PROJECT_A="${HOME}/sample-a"
+PROJECT_B="${HOME}/sample-b"
 
 CS_BIN="${HOME}/.local/bin/code-server"
 LOG_DIR="/tmp/cs-spike"

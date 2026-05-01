@@ -1,55 +1,61 @@
-// Project registry — step 1 returns a hardcoded list.
+// Project registry — step 1 returns a hardcoded sample list.
 //
-// v0.2 will read %APPDATA%\vstabs\projects.json (Windows) or ~/.config/vstabs/projects.json
-// and write through it via add/remove project commands invoked from the UI.
+// The four entries below are *examples*: one local Windows folder, one WSL
+// project, one Oracle-style cloud SSH host, one generic remote SSH host.
+// Edit this file (or, after v0.2, edit the JSON registry at
+// %APPDATA%\vstabs\projects.json) to match your own environment.
+//
+// SSH entries assume the user's ssh config (typically Tailscale-resolved
+// aliases for personal-use deployments) already contains the host names
+// listed here. See `docs/design.md` "SSH backend security model".
 
 use crate::Project;
 
 pub fn default_projects() -> Vec<Project> {
     vec![
         Project {
-            id: "project-main".into(),
-            name: "project-main".into(),
+            id: "sample-local".into(),
+            name: "sample-local".into(),
             icon: "🏠".into(),
-            env: "wsl".into(),
+            env: "local".into(),
             port: 8080,
-            folder: "~/projects/main".into(),
-            wsl_distro: Some("Ubuntu".into()),
+            folder: "C:\\Projects\\sample-local".into(),
+            wsl_distro: None,
             ssh_host: None,
         },
         Project {
-            id: "vstabs".into(),
-            name: "vstabs".into(),
-            icon: "📑".into(),
+            id: "sample-wsl".into(),
+            name: "sample-wsl".into(),
+            icon: "🐧".into(),
             env: "wsl".into(),
             port: 8081,
-            folder: "~/projects/vstabs".into(),
+            folder: "/home/your-user/sample-wsl".into(),
             wsl_distro: Some("Ubuntu".into()),
             ssh_host: None,
         },
-        // SSH entries — assume the user's ssh config (Tailscale-resolved alias)
-        // has the host. Remote `port` is the port code-server binds *on the
-        // remote*; vstabs allocates a fresh local port for the SSH tunnel
-        // dynamically and the WebView connects to that.
+        // SSH entries — the host alias must be resolvable through your ssh
+        // config. The remote `port` is what code-server will bind on the
+        // remote host; vstabs allocates a fresh local port for the SSH
+        // tunnel dynamically and points the WebView at that.
         Project {
-            id: "cloud-host".into(),
-            name: "cloud-host".into(),
+            id: "sample-cloud".into(),
+            name: "sample-cloud".into(),
             icon: "☁️".into(),
             env: "ssh".into(),
             port: 8090,
             folder: "/home/ubuntu".into(),
             wsl_distro: None,
-            ssh_host: Some("cloud-host".into()),
+            ssh_host: Some("my-cloud-host".into()),
         },
         Project {
-            id: "gpu-dev".into(),
-            name: "gpu-host".into(),
+            id: "sample-remote".into(),
+            name: "sample-remote".into(),
             icon: "🖥".into(),
             env: "ssh".into(),
             port: 8091,
-            folder: "~".into(),
+            folder: "/home/your-user".into(),
             wsl_distro: None,
-            ssh_host: Some("gpu-host".into()),
+            ssh_host: Some("my-remote-host".into()),
         },
     ]
 }

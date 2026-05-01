@@ -26,7 +26,7 @@
 # 1) VS Code 아무 창이나 하나 띄워둔다 (local/WSL/SSH 무관)
 
 # 2) 빌드 + 실행
-cd \\wsl.localhost\Ubuntu\path\to\vstabs\spike\reparent
+cd \\wsl.localhost\Ubuntu\home\<your-user>\project-main\vstabs\spike\reparent
 cargo run --release
 ```
 

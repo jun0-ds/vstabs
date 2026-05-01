@@ -31,13 +31,15 @@ bash start-code-servers.sh
 ```
 
 This spawns two code-server instances (lazy-loads on first request):
-- A: `http://127.0.0.1:8080` opening `~/project-main`
-- B: `http://127.0.0.1:8081` opening `~/project-main/vstabs`
+- A: `http://127.0.0.1:8080` opening `~/sample-a`
+- B: `http://127.0.0.1:8081` opening `~/sample-b`
+
+(Edit the script if you want different folders.)
 
 Then in **Chrome or Edge** on Windows (Firefox had layout glitches in earlier spike):
 
 ```
-file:///\\wsl.localhost\Ubuntu\path\to\vstabs\spike\v0.1-iframe-tab\index.html
+file:///\\wsl.localhost\<your-distro>\path\to\spike\v0.1-iframe-tab\index.html
 ```
 
 Or copy `index.html` to Windows side and double-click.

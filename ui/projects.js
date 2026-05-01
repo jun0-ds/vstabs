@@ -1,12 +1,12 @@
 // Spike fallback only — used when ui/ is opened in a plain browser (not Tauri).
 // In Tauri, projects come from the Rust backend's list_projects command.
 //
-// Keep this in sync with src-tauri/src/registry.rs::default_projects() until
-// v0.2 introduces the JSON-backed registry.
+// Edit this file to point at your own folders/ports if you want to test the
+// frontend in isolation. The numbers and names here are samples.
 
 const PROJECTS = [
-  { id: "project-main", name: "project-main", icon: "🏠", env: "wsl",
-    port: 8080, folder: "~/projects/main" },
-  { id: "vstabs", name: "vstabs", icon: "📑", env: "wsl",
-    port: 8081, folder: "~/projects/vstabs" },
+  { id: "sample-a", name: "sample-a", icon: "📁", env: "wsl",
+    port: 8080, folder: "/home/your-user/sample-a" },
+  { id: "sample-b", name: "sample-b", icon: "📂", env: "wsl",
+    port: 8081, folder: "/home/your-user/sample-b" },
 ];

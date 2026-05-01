@@ -7,7 +7,7 @@ Quick UX sanity check before committing to the Tauri MVP (see [`../docs/design.m
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) on Windows.
 2. Make sure VS Code's `code` CLI is on PATH (default if installed via the user installer with "Add to PATH" checked).
 3. Double-click `vstabs.ahk`. From WSL the UNC path also works:
-   `\\wsl.localhost\Ubuntu\path\to\vstabs\prototype\vstabs.ahk`
+   `\\wsl.localhost\Ubuntu\home\<your-user>\project-main\vstabs\prototype\vstabs.ahk`
 4. A horizontal tab bar appears centered at the top of the primary monitor.
 
 ## Edit projects

@@ -143,8 +143,8 @@ fn spawn_ssh(project: &Project) -> Result<ServerHandle, SpawnError> {
     //   3. Backgrounds code-server, captures its PID, then `wait`s
     //
     // Combined with `ssh -tt` below, this makes ssh client death cleanly
-    // SIGHUP the remote process tree — verified end-to-end against oracle
-    // and gpu-host (2026-05-01 spike).
+    // SIGHUP the remote process tree — verified end-to-end against two SSH hosts
+    // (2026-05-01 spike).
     let inner = format!(
         "exec env -u VSCODE_IPC_HOOK_CLI -u VSCODE_IPC_HOOK -u VSCODE_PID -u VSCODE_CWD \
          bash -c 'trap \"kill -TERM 0\" SIGTERM SIGHUP SIGINT; \
@@ -160,7 +160,7 @@ fn spawn_ssh(project: &Project) -> Result<ServerHandle, SpawnError> {
         // to 127.0.0.1:{remote} on the SSH host (where code-server will bind).
         "-L",
         &format!("127.0.0.1:{}:127.0.0.1:{}", local_port, remote_port),
-        // -tt: force TTY allocation even though our stdin is /dev/null. Required
+        // -tt: force TTY allocation even though our stdin is piped. Required
         // for SIGHUP propagation to the remote process when ssh client dies.
         // Without this, the remote code-server keeps running as an orphan
         // (verified during the v0.2 D spike).
@@ -178,7 +178,13 @@ fn spawn_ssh(project: &Project) -> Result<ServerHandle, SpawnError> {
         host,
         &inner,
     ])
-    .stdin(Stdio::null())
+    // stdin = piped (NOT null). Windows OpenSSH treats Stdio::null() as
+    // immediate EOF and exits — observed against vstabs.exe on Windows host:
+    // tunnel briefly came up (page loaded once), then ssh died and the iframe
+    // showed "연결이 다시 설정되었습니다" / "connection has been reset".
+    // Piped stdin stays open for the child's lifetime; ssh keeps the channel
+    // alive until vstabs drops the handle (window close → SIGHUP propagation).
+    .stdin(Stdio::piped())
     .stdout(Stdio::null())
     .stderr(Stdio::null());
     hide_console_on_windows(&mut cmd);

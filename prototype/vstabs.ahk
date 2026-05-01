@@ -19,31 +19,23 @@
 
 global PROJECTS := [
     Map(
-        "name",   "project-main",
-        "env",    "wsl",
-        "distro", "Ubuntu",
-        "path",   "~/projects/main",
+        "name",   "sample-local",
+        "env",    "local",
+        "path",   "C:\Projects\sample-local",
         "icon",   "🏠"
     ),
     Map(
-        "name",   "lib-x",
+        "name",   "sample-wsl",
         "env",    "wsl",
         "distro", "Ubuntu",
-        "path",   "~/projects/lib-x",
-        "icon",   "🔌"
+        "path",   "/home/your-user/sample-wsl",
+        "icon",   "🐧"
     ),
     Map(
-        "name",   "vstabs",
-        "env",    "wsl",
-        "distro", "Ubuntu",
-        "path",   "~/projects/vstabs",
-        "icon",   "📑"
-    ),
-    Map(
-        "name",     "gpu-dev",
+        "name",     "sample-remote",
         "env",      "ssh",
-        "ssh_host", "gpu-host",
-        "path",     "~/work",
+        "ssh_host", "my-remote-host",
+        "path",     "/home/your-user",
         "icon",     "🖥"
     )
 ]

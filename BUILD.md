@@ -13,7 +13,7 @@ registry come in step 2 / v0.2.
 2. **Tauri CLI 2.x** — `cargo install tauri-cli --version "^2.0"`
 3. **Microsoft C++ Build Tools** (already present if you have Visual Studio Code)
 4. **WebView2 Runtime** — bundled with Windows 10 1809+ via Edge
-5. **WSL distro with code-server installed** — `Ubuntu` is the default in `src-tauri/src/registry.rs`
+5. **WSL distro with code-server installed** — `Ubuntu` is the placeholder distro in `src-tauri/src/registry.rs`; change it to match your own (`wsl -l -v` to list)
 
 If `code-server` is missing in WSL:
 
@@ -44,7 +44,7 @@ Output: `src-tauri/target/release/bundle/` — `.msi` and `.exe` installers.
 ## What v0.1 step 1 does
 
 - Opens a single OS window titled "vstabs"
-- Loads two tabs from `registry::default_projects()`: project-main (WSL) and vstabs (WSL)
+- Loads sample tabs from `registry::default_projects()` (one local, one WSL, two SSH placeholders — edit to match your own setup)
 - Click a tab → backend spawns `code-server` for that project on its assigned port
 - Iframe loads `http://127.0.0.1:{port}` and shows the editor
 - Switching tabs hides the previous iframe and shows the next (warm switch)
@@ -61,12 +61,11 @@ The `ui/` directory works standalone if served over HTTP — useful for fast UI
 iteration without rebuilding the Rust shell:
 
 ```bash
-# WSL
-cd ~/project-main/vstabs/ui
+cd ui
 python3 -m http.server 9000 --bind 127.0.0.1
 # then open http://127.0.0.1:9000/ in Chrome/Edge,
 # after starting code-server backends manually:
-bash ~/project-main/vstabs/spike/v0.1-iframe-tab/start-code-servers.sh
+bash ../spike/v0.1-iframe-tab/start-code-servers.sh
 ```
 
 The fallback path in `app.js` reads from `ui/projects.js` when `window.__TAURI__`
@@ -115,6 +114,6 @@ use Windows builds for end-to-end verification and shipping.
 ## Troubleshooting
 
 - **"window blank, no tabs"** — open devtools (`Ctrl+Shift+I` in Tauri dev mode), check console for `list_projects` error
-- **"code-server fails to spawn"** — check WSL distro name in `registry.rs` matches `wsl -l -v` output
+- **"code-server fails to spawn"** — check WSL distro name in `registry.rs` matches `wsl -l -v` output; for SSH entries make sure the host alias resolves through your `~/.ssh/config`
 - **"port already in use"** — another `code-server` is bound; `pkill -f code-server` in WSL or change ports in `registry.rs`
 - **"VS Code IPC redirect"** — happens when Tauri inherits `VSCODE_IPC_HOOK_CLI` from the launching shell. The Rust spawn strips these, but if you spawn manually for testing, prefix with `env -u VSCODE_IPC_HOOK_CLI -u VSCODE_IPC_HOOK ...`

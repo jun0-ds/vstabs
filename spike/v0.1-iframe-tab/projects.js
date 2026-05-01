@@ -23,19 +23,19 @@ const ENV_COLORS = {
 
 const PROJECTS = [
   {
-    id: "project-main",
-    name: "project-main",
-    icon: "🏠",
+    id: "sample-a",
+    name: "sample-a",
+    icon: "📁",
     env: "wsl",
     port: 8080,
-    folder: "~/projects/main",
+    folder: "/home/your-user/sample-a",
   },
   {
-    id: "vstabs",
-    name: "vstabs",
-    icon: "📑",
+    id: "sample-b",
+    name: "sample-b",
+    icon: "📂",
     env: "wsl",
     port: 8081,
-    folder: "~/projects/vstabs",
+    folder: "/home/your-user/sample-b",
   },
 ];
