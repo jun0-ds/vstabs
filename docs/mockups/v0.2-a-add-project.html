@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>vstabs v0.2 A — wireframe</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d0d0d; color: #cccccc;
+    font-family: 'Segoe UI', -apple-system, system-ui, sans-serif;
+    padding: 24px; min-height: 100vh;
+  }
+  h1 { font-size: 14px; color: #888; margin-bottom: 8px; font-weight: 500; letter-spacing: 0.5px; }
+  h2 { font-size: 12px; color: #666; margin: 32px 0 8px; font-weight: 400; text-transform: uppercase; }
+  .frame {
+    background: #1e1e1e; border: 1px solid #2a2a2a; border-radius: 6px;
+    overflow: hidden; max-width: 1200px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  /* tab bar */
+  #tabbar {
+    display: flex; height: 44px; background: #252526;
+    align-items: stretch; border-bottom: 1px solid #1e1e1e;
+    user-select: none;
+  }
+  #tabbar .tab {
+    background: transparent; border: none; color: #ccc;
+    padding: 0 18px; cursor: pointer; font-size: 13px;
+    border-right: 1px solid #1e1e1e;
+    display: flex; align-items: center; gap: 10px;
+    position: relative;
+  }
+  #tabbar .tab.active { background: #1e1e1e; color: #fff; }
+  #tabbar .tab.active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+    height: 2px; background: #56b6c2;
+  }
+  #tabbar .tab .icon { font-size: 16px; }
+  #tabbar .tab .env-tag {
+    font-size: 10px; padding: 2px 6px; border-radius: 3px;
+    color: #1e1e1e; font-weight: 600; letter-spacing: 0.5px;
+  }
+  .env-local { background: #7cb342; }
+  .env-wsl { background: #56b6c2; }
+  .env-ssh { background: #a371f7; }
+  #tabbar .add {
+    background: transparent; border: none; color: #888; cursor: pointer;
+    padding: 0 14px; font-size: 18px; border-right: 1px solid #1e1e1e;
+  }
+
+  /* content area */
+  .content {
+    height: 480px; background: #1e1e1e;
+    display: flex; align-items: center; justify-content: center;
+    color: #555; font-size: 12px;
+  }
+
+  /* empty-state */
+  .empty {
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+    color: #ccc;
+  }
+  .empty h3 { font-size: 22px; font-weight: 400; color: #eee; margin: 0; }
+  .empty p { font-size: 13px; color: #888; }
+  .empty .cta {
+    background: #007acc; color: white; border: none;
+    padding: 12px 28px; font-size: 14px; border-radius: 4px;
+    cursor: pointer; font-weight: 500;
+  }
+  .empty .cta:hover { background: #1389d6; }
+
+  /* modal overlay */
+  .modal-overlay {
+    position: relative; background: rgba(0,0,0,0.5);
+    height: 480px; display: flex; align-items: center; justify-content: center;
+  }
+  .modal {
+    background: #252526; border: 1px solid #3a3a3a;
+    width: 480px; padding: 22px; border-radius: 6px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+  }
+  .modal h3 {
+    color: #eee; font-size: 16px; font-weight: 500; margin-bottom: 16px;
+  }
+  .modal label {
+    display: block; font-size: 11px; color: #888; margin-top: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .modal input, .modal select {
+    width: 100%; background: #1e1e1e; border: 1px solid #3a3a3a;
+    color: #ddd; padding: 7px 10px; font-size: 13px; border-radius: 3px;
+    margin-top: 4px; font-family: inherit;
+  }
+  .modal input:focus, .modal select:focus {
+    outline: none; border-color: #007acc;
+  }
+  .modal .row { display: flex; gap: 10px; }
+  .modal .row > div { flex: 1; }
+  .modal .env-radio {
+    display: flex; gap: 6px; margin-top: 4px;
+  }
+  .modal .env-radio label {
+    flex: 1; text-align: center; padding: 7px; cursor: pointer;
+    background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 3px;
+    color: #888; font-size: 12px; text-transform: none; letter-spacing: 0;
+    margin: 0; font-weight: 500;
+  }
+  .modal .env-radio label.active {
+    background: #007acc; color: white; border-color: #007acc;
+  }
+  .modal .conditional {
+    border-top: 1px solid #2a2a2a; margin-top: 14px; padding-top: 6px;
+  }
+  .modal .actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;
+  }
+  .modal .actions button {
+    padding: 7px 16px; border-radius: 3px; cursor: pointer; font-size: 13px;
+    border: 1px solid #3a3a3a; background: #1e1e1e; color: #ccc;
+  }
+  .modal .actions button.primary {
+    background: #007acc; color: white; border-color: #007acc;
+  }
+  .modal .hint {
+    font-size: 11px; color: #666; margin-top: 4px; font-style: italic;
+  }
+
+  /* context menu */
+  .ctx-pos { position: relative; }
+  .ctx-menu {
+    position: absolute; top: 44px; left: 50px;
+    background: #252526; border: 1px solid #3a3a3a; border-radius: 4px;
+    padding: 4px 0; min-width: 160px; font-size: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  .ctx-menu .item {
+    padding: 7px 14px; cursor: pointer; color: #ccc;
+  }
+  .ctx-menu .item:hover { background: #094771; color: white; }
+  .ctx-menu .sep { height: 1px; background: #3a3a3a; margin: 4px 0; }
+  .ctx-menu .danger { color: #f48771; }
+</style>
+</head>
+<body>
+
+<h1>vstabs v0.2 A — wireframe (4 states)</h1>
+
+<h2>① First run — empty state + CTA</h2>
+<div class="frame">
+  <nav id="tabbar">
+    <button class="add">+</button>
+  </nav>
+  <div class="content">
+    <div class="empty">
+      <h3>Welcome to vstabs</h3>
+      <p>No projects yet — let's add one.</p>
+      <button class="cta">+ Add your first project</button>
+    </div>
+  </div>
+</div>
+
+<h2>② Add Project modal — env = WSL (distro dropdown shown)</h2>
+<div class="frame">
+  <nav id="tabbar">
+    <button class="add">+</button>
+  </nav>
+  <div class="modal-overlay">
+    <div class="modal">
+      <h3>Add project</h3>
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input type="text" value="my-project" />
+        </div>
+        <div style="flex: 0 0 80px;">
+          <label>Icon</label>
+          <input type="text" value="📁" />
+        </div>
+      </div>
+
+      <label>Environment</label>
+      <div class="env-radio">
+        <label>Local</label>
+        <label class="active">WSL</label>
+        <label>SSH</label>
+      </div>
+
+      <div class="conditional">
+        <label>WSL distro</label>
+        <select>
+          <option>Ubuntu</option>
+          <option>Ubuntu-22.04</option>
+          <option>Debian</option>
+        </select>
+        <div class="hint">populated from `wsl -l --quiet`</div>
+      </div>
+
+      <label>Folder</label>
+      <input type="text" value="/home/your-user/projects/my-project" />
+
+      <label>Port (optional)</label>
+      <input type="text" placeholder="auto" />
+
+      <div class="actions">
+        <button>Cancel</button>
+        <button class="primary">Add</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>③ Add Project modal — env = SSH (host combobox + auto-suggest)</h2>
+<div class="frame">
+  <nav id="tabbar">
+    <button class="tab active">
+      <span class="icon">📁</span><span>my-project</span>
+      <span class="env-tag env-wsl">WSL</span>
+    </button>
+    <button class="add">+</button>
+  </nav>
+  <div class="modal-overlay">
+    <div class="modal">
+      <h3>Add project</h3>
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input type="text" value="cloud-host" />
+        </div>
+        <div style="flex: 0 0 80px;">
+          <label>Icon</label>
+          <input type="text" value="☁️" />
+        </div>
+      </div>
+
+      <label>Environment</label>
+      <div class="env-radio">
+        <label>Local</label>
+        <label>WSL</label>
+        <label class="active">SSH</label>
+      </div>
+
+      <div class="conditional">
+        <label>SSH host</label>
+        <input type="text" value="my-cloud-host" list="ssh-aliases" />
+        <datalist id="ssh-aliases">
+          <option value="my-cloud-host">
+          <option value="dev-box">
+          <option value="gpu-rig">
+        </datalist>
+        <div class="hint">suggestions from `~/.ssh/config` Host aliases — also accepts new names</div>
+      </div>
+
+      <label>Folder (on remote)</label>
+      <input type="text" value="/home/ubuntu/work" />
+
+      <label>Remote port (default 8090)</label>
+      <input type="text" placeholder="8090" />
+
+      <div class="actions">
+        <button>Cancel</button>
+        <button class="primary">Add</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>④ Tab right-click → context menu (edit / remove)</h2>
+<div class="frame ctx-pos">
+  <nav id="tabbar">
+    <button class="tab">
+      <span class="icon">📁</span><span>my-project</span>
+      <span class="env-tag env-wsl">WSL</span>
+    </button>
+    <button class="tab active">
+      <span class="icon">☁️</span><span>cloud-host</span>
+      <span class="env-tag env-ssh">SSH</span>
+    </button>
+    <button class="add">+</button>
+  </nav>
+  <div class="content">
+    <span>(active project content area)</span>
+  </div>
+  <div class="ctx-menu">
+    <div class="item">📝 Edit project…</div>
+    <div class="item">↑ Move left</div>
+    <div class="item">↓ Move right</div>
+    <div class="sep"></div>
+    <div class="item danger">🗑 Remove project</div>
+  </div>
+</div>
+
+</body>
+</html>

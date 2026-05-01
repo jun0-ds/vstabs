@@ -213,10 +213,99 @@ Once the spike passes:
 - Local + WSL backends (SSH deferred to v0.2)
 
 ### v0.2 — Polish + remote
-- SSH backend (port-forward + remote code-server)
-- Per-project `--user-data-dir` opt-in for stronger isolation
-- Drag-to-reorder tabs, add/remove via UI
-- Optional lib-x memory tooltip on tab hover
+
+**v0.2 D — SSH backend** (✅ shipped) — Tailscale-assumed `ssh -L` tunnel + remote `code-server` lifetime owned by the ssh client. See [SSH backend security model](#ssh-backend-security-model-v02-default) above.
+
+**v0.2 A — JSON registry + add-project UI** (next) — replaces `src-tauri/src/registry.rs` hardcoded list with `%APPDATA%\vstabs\projects.json`, edited through the UI. **Spec below.**
+
+**v0.2 B — Idle suspend** — N-minute idle threshold per backend; suspend via SIGTERM, re-spawn on next click.
+
+**v0.2 C — Global hotkey** — `tauri-plugin-global-shortcut` for OS-level toggle / select-N.
+
+**v0.2 E** (optional) — Per-project `--user-data-dir` for stronger extension/auth isolation. Memory cost N×.
+
+#### v0.2 A spec — registry & onboarding UX
+
+**Persistence**
+
+```
+%APPDATA%\vstabs\projects.json     (Windows)
+~/.config/vstabs/projects.json     (Linux/macOS)
+```
+
+Schema is the same as the [Project registry](#project-registry) section above; vstabs reads the file on startup and writes it on every CRUD operation. If the file is missing, vstabs creates it with an empty `projects: []`.
+
+**First-run UX (zero registered projects)**
+
+```
+┌─────────────────────────────────────────────────┐ vstabs
+│   +                                             │ ← tab bar with only "+" button
+├─────────────────────────────────────────────────┤
+│                                                 │
+│              Welcome to vstabs                  │
+│                                                 │
+│        No projects yet — let's add one.         │
+│                                                 │
+│         ┌───────────────────────────┐           │
+│         │  + Add your first project │           │ ← single big CTA
+│         └───────────────────────────┘           │
+│                                                 │
+└─────────────────────────────────────────────────┘
+```
+
+CTA click → modal (same modal as `+` button afterward).
+
+**Add Project modal**
+
+| Field | Type | Notes |
+|---|---|---|
+| Name | text | display label, ≤ 30 chars |
+| Icon | text (single emoji) | optional; default "📁" |
+| Env | radio: `local` / `wsl` / `ssh` | drives the conditional fields below |
+| Folder | text | path on the selected env |
+| Port | number | default auto (vstabs picks free port; user can override) |
+| `wsl_distro` | dropdown | shown only if env = wsl. Populated from `wsl -l --quiet` (Windows) or fallback "Ubuntu". |
+| `ssh_host` | combobox | shown only if env = ssh. Dropdown auto-populated from `~/.ssh/config` `Host` aliases; user can also type a name not in the list. |
+
+Validation: name + folder + (wsl_distro if wsl) + (ssh_host if ssh) are required. Port and Icon are optional.
+
+Submit → vstabs writes the entry to `projects.json`, appends a tab to the bar, leaves it idle (status dot grey). First click on the new tab triggers lazy spawn.
+
+**Tab management (already-registered projects)**
+
+| Action | UI |
+|---|---|
+| Add | `+` button at end of tab bar → modal |
+| Edit | right-click tab → "Edit project" → same modal pre-filled |
+| Remove | right-click tab → "Remove project" → confirm dialog → write registry, kill backend if running |
+| Reorder | drag-and-drop tabs → write new `order` field to registry |
+
+**Migration from v0.1**
+
+The bundled `registry.rs::default_projects()` is a build-time fallback. On v0.2 first run:
+
+- If `projects.json` exists → use it
+- If it doesn't exist → write a fresh empty file (`{ "version": 2, "projects": [] }`) and show first-run UX
+
+The hardcoded sample list is no longer surfaced to the user; it stays in source for testing only.
+
+**Backend commands (Tauri)**
+
+```rust
+list_projects()          -> Vec<Project>      // reads projects.json
+add_project(p: Project)  -> Result<()>        // append + write
+update_project(p)        -> Result<()>        // overwrite by id
+remove_project(id)       -> Result<()>        // delete + kill backend if alive
+reorder_projects(ids)    -> Result<()>        // rewrite order field
+list_wsl_distros()       -> Vec<String>       // wsl -l --quiet, deduped
+list_ssh_aliases()       -> Vec<String>       // parse ~/.ssh/config Host lines
+```
+
+**Out of scope for v0.2 A**
+
+- Per-project color picker (use env color until v0.3)
+- Drag tab to a separate vstabs window (multi-window mode is v0.3+)
+- Project export/import (.vstabs files for sharing — possible v0.3)
 
 ### v0.3+ — Cross-platform
 - macOS: ship as a Tauri app but recommend native `Window | Merge All Project Windows` in JetBrains / Zed if user prefers; vstabs's value on macOS is mainly the local/WSL/SSH unification
