@@ -63,20 +63,23 @@ async fn spawn_server(
 ) -> Result<ServerStatus, String> {
     {
         let servers = state.servers.lock().unwrap();
-        if servers.contains_key(&project.id) {
+        if let Some(h) = servers.get(&project.id) {
+            // Backend already alive — return the port the WebView should connect to.
+            // For SSH this is the local forwarded port, not project.port (remote port).
             return Ok(ServerStatus {
                 project_id: project.id,
-                port: project.port,
+                port: h.port,
                 running: true,
             });
         }
     }
     let handle = spawn_for(&project).map_err(|e| e.to_string())?;
+    let effective_port = handle.port;
     let mut servers = state.servers.lock().unwrap();
     servers.insert(project.id.clone(), handle);
     Ok(ServerStatus {
         project_id: project.id,
-        port: project.port,
+        port: effective_port,
         running: true,
     })
 }

@@ -17,7 +17,10 @@ const emptyEl = document.getElementById("empty-state");
 
 const tabEls = {};
 const iframeEls = {};
-const tabState = {}; // id -> 'idle' | 'spawning' | 'running'
+const tabState = {};       // id -> 'idle' | 'spawning' | 'running'
+const effectivePort = {};  // id -> port the WebView should connect to (may differ
+                            //       from project.port for SSH backends, where it's
+                            //       a dynamically allocated local forward)
 
 let projects = [];
 let activeId = null;
@@ -98,7 +101,12 @@ async function ensureBackend(project) {
   if (tabState[project.id] === "running") return;
   setStatus(project.id, "spawning");
   try {
-    await backendSpawn(project);
+    const status = await backendSpawn(project);
+    // Backend tells us which local port to connect to. SSH backends allocate
+    // a fresh local port per spawn; local/wsl backends just echo project.port.
+    if (status && typeof status.port === "number") {
+      effectivePort[project.id] = status.port;
+    }
     setStatus(project.id, "running");
   } catch (e) {
     setStatus(project.id, "idle");
@@ -108,11 +116,12 @@ async function ensureBackend(project) {
 }
 
 function showIframe(project) {
+  const port = effectivePort[project.id] ?? project.port;
   let iframe = iframeEls[project.id];
   if (!iframe) {
     iframe = document.createElement("iframe");
     iframe.dataset.id = project.id;
-    iframe.src = `http://127.0.0.1:${project.port}/?folder=${encodeURIComponent(project.folder)}`;
+    iframe.src = `http://127.0.0.1:${port}/?folder=${encodeURIComponent(project.folder)}`;
     content.appendChild(iframe);
     iframeEls[project.id] = iframe;
   }
