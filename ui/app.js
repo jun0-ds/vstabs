@@ -1,9 +1,10 @@
-// vstabs v0.1 — frontend entry point.
+// vstabs v0.2 A — frontend.
 //
-// Tabs are driven by the backend's list_projects command. When a tab is clicked
-// for the first time, we ask the backend to spawn its code-server, then point
-// the iframe at http://127.0.0.1:{port}. Subsequent activations just toggle
-// visibility — the iframe stays alive (warm switch).
+// Reads the project list from the backend's JSON-backed registry
+// (list_projects), builds a tab per project, lazy-spawns the code-server
+// backend on first activation. Add Project modal + tab right-click context
+// menu (edit / move / remove). Backend is the source of truth — every CRUD
+// op round-trips through Tauri commands and re-renders the tab bar.
 
 const ENV_COLORS = {
   local: "#7cb342",
@@ -11,51 +12,49 @@ const ENV_COLORS = {
   ssh:   "#a371f7",
 };
 
-const tabbar = document.getElementById("tabbar");
+const tabbar  = document.getElementById("tabbar");
 const content = document.getElementById("content");
 const emptyEl = document.getElementById("empty-state");
 
-const tabEls = {};
-const iframeEls = {};
-const tabState = {};       // id -> 'idle' | 'spawning' | 'running'
-const effectivePort = {};  // id -> port the WebView should connect to (may differ
-                            //       from project.port for SSH backends, where it's
-                            //       a dynamically allocated local forward)
+const tabEls       = {}; // id -> tab button element
+const iframeEls    = {}; // id -> iframe element
+const tabState     = {}; // id -> 'idle' | 'spawning' | 'running' | 'failed'
+const effectivePort = {}; // id -> port the WebView should connect to
 
 let projects = [];
 let activeId = null;
 let switchCount = 0;
 let lastSwitchMs = 0;
 
-// ---- Tauri bridge --------------------------------------------------------
-//
-// withGlobalTauri = true in tauri.conf.json puts the runtime on window.__TAURI__.
-// We fall back to fetch-based behavior if loaded outside Tauri, so the same UI
-// can be opened in a plain browser for spike-style testing.
+// ---- Tauri bridge ---------------------------------------------------------
 
 const inTauri = typeof window.__TAURI__ !== "undefined";
-const invoke = inTauri ? window.__TAURI__.core.invoke : null;
+const invoke  = inTauri ? window.__TAURI__.core.invoke : null;
 
 async function backendListProjects() {
   if (inTauri) return await invoke("list_projects");
-  // Spike fallback — load from projects.js if present.
   if (typeof PROJECTS !== "undefined") return PROJECTS;
   return [];
 }
+async function backendAddProject(p)    { return inTauri ? invoke("add_project", { project: p })    : null; }
+async function backendUpdateProject(p) { return inTauri ? invoke("update_project", { project: p }) : null; }
+async function backendRemoveProject(id){ return inTauri ? invoke("remove_project", { projectId: id }) : null; }
+async function backendReorderProjects(ids) { return inTauri ? invoke("reorder_projects", { orderedIds: ids }) : null; }
+async function backendListWslDistros() { return inTauri ? invoke("list_wsl_distros") : []; }
+async function backendListSshAliases() { return inTauri ? invoke("list_ssh_aliases") : []; }
 
 async function backendSpawn(project) {
-  if (!inTauri) {
-    return { project_id: project.id, port: project.port, running: true };
-  }
+  if (!inTauri) return { project_id: project.id, port: project.port, running: true };
   return await invoke("spawn_server", { project });
 }
-
 async function backendStop(projectId) {
   if (!inTauri) return;
   return await invoke("stop_server", { projectId });
 }
 
-// ---- Favicon (emoji svg data url) ----------------------------------------
+// ---- Tiny helpers ---------------------------------------------------------
+
+function envColor(env) { return ENV_COLORS[env] || "#888"; }
 
 function setFavicon(emoji) {
   let link = document.querySelector("link[rel~='icon']");
@@ -72,28 +71,38 @@ function setFavicon(emoji) {
   link.href = "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }
 
-// ---- Toast (small status feedback) ---------------------------------------
-
 function toast(msg, ms = 2500) {
   const el = document.createElement("div");
   el.className = "toast";
   el.textContent = msg;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("show"));
-  setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => el.remove(), 250);
-  }, ms);
+  setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 250); }, ms);
 }
 
-// ---- Tab activation ------------------------------------------------------
+function slugify(s) {
+  return s.trim().toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "project";
+}
+
+function isPortValid(p) {
+  if (p === "" || p == null) return true;
+  const n = Number(p);
+  return Number.isInteger(n) && n >= 1024 && n <= 65535;
+}
+
+// ---- Tab status -----------------------------------------------------------
 
 function setStatus(id, status) {
   tabState[id] = status;
   const dot = tabEls[id]?.querySelector(".status-dot");
   if (dot) {
-    dot.classList.toggle("running", status === "running");
-    dot.classList.toggle("spawning", status === "spawning");
+    dot.classList.remove("running", "spawning", "failed");
+    if (status === "running" || status === "spawning" || status === "failed") {
+      dot.classList.add(status);
+    }
   }
 }
 
@@ -102,14 +111,12 @@ async function ensureBackend(project) {
   setStatus(project.id, "spawning");
   try {
     const status = await backendSpawn(project);
-    // Backend tells us which local port to connect to. SSH backends allocate
-    // a fresh local port per spawn; local/wsl backends just echo project.port.
     if (status && typeof status.port === "number") {
       effectivePort[project.id] = status.port;
     }
     setStatus(project.id, "running");
   } catch (e) {
-    setStatus(project.id, "idle");
+    setStatus(project.id, "failed");
     toast(`Failed to start ${project.name}: ${e}`);
     throw e;
   }
@@ -134,8 +141,12 @@ async function activate(id) {
   if (!project) return;
   const t0 = performance.now();
   Object.entries(tabEls).forEach(([k, el]) => el.classList.toggle("active", k === id));
-  await ensureBackend(project);
-  showIframe(project);
+  try {
+    await ensureBackend(project);
+    showIframe(project);
+  } catch {
+    return;
+  }
   activeId = id;
   document.title = `${project.icon} ${project.name} — vstabs`;
   setFavicon(project.icon);
@@ -144,11 +155,7 @@ async function activate(id) {
   renderMeta();
 }
 
-// ---- Tab bar build -------------------------------------------------------
-
-function envColor(env) {
-  return ENV_COLORS[env] || "#888";
-}
+// ---- Tab bar build --------------------------------------------------------
 
 function renderMeta() {
   const meta = tabbar.querySelector(".meta");
@@ -159,58 +166,336 @@ function renderMeta() {
     `<span>switch #${switchCount} ${lastSwitchMs.toFixed(0)}ms</span>`;
 }
 
-function buildTab(project) {
-  const tab = document.createElement("button");
-  tab.className = "tab";
-  tab.style.setProperty("--env-color", envColor(project.env));
-  tab.dataset.id = project.id;
-  tab.innerHTML =
-    `<span class="status-dot"></span>` +
-    `<span class="icon">${project.icon}</span>` +
-    `<span class="name">${project.name}</span>` +
-    `<span class="env-tag">${project.env.toUpperCase()}</span>`;
-  tab.addEventListener("click", () => activate(project.id));
-  tabbar.appendChild(tab);
-  tabEls[project.id] = tab;
-  setStatus(project.id, "idle");
-}
+function buildTabBar() {
+  // Wipe and rebuild — easier than diff for v0.2 A
+  tabbar.innerHTML = "";
+  Object.keys(tabEls).forEach((k) => delete tabEls[k]);
 
-function buildAddButton() {
-  const btn = document.createElement("button");
-  btn.className = "add";
-  btn.title = "Add project";
-  btn.textContent = "+";
-  btn.addEventListener("click", () => {
-    toast("Add-project UI is v0.2. Edit src-tauri/src/registry.rs for now.");
+  projects.forEach((project) => {
+    const tab = document.createElement("button");
+    tab.className = "tab";
+    tab.style.setProperty("--env-color", envColor(project.env));
+    tab.dataset.id = project.id;
+    tab.innerHTML =
+      `<span class="status-dot"></span>` +
+      `<span class="icon">${project.icon || "📁"}</span>` +
+      `<span class="name">${escapeHtml(project.name)}</span>` +
+      `<span class="env-tag">${project.env.toUpperCase()}</span>`;
+    tab.addEventListener("click", () => activate(project.id));
+    tab.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      openContextMenu(ev.clientX, ev.clientY, project.id);
+    });
+    tabbar.appendChild(tab);
+    tabEls[project.id] = tab;
+    setStatus(project.id, tabState[project.id] || "idle");
   });
-  tabbar.appendChild(btn);
-}
 
-function buildSpacerAndMeta() {
+  // "+" button
+  const addBtn = document.createElement("button");
+  addBtn.className = "add";
+  addBtn.title = "Add project";
+  addBtn.textContent = "+";
+  addBtn.addEventListener("click", () => openModal("add"));
+  tabbar.appendChild(addBtn);
+
+  // Spacer + meta
   const spacer = document.createElement("div");
   spacer.className = "spacer";
   tabbar.appendChild(spacer);
   const meta = document.createElement("div");
   meta.className = "meta";
   tabbar.appendChild(meta);
+  renderMeta();
 }
 
-// ---- Hotkeys -------------------------------------------------------------
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
 
-window.addEventListener("keydown", (e) => {
-  if (e.ctrlKey && e.altKey && /^Digit[1-9]$/.test(e.code)) {
-    const n = parseInt(e.code.slice(-1), 10);
+// ---- Modal: add / edit project --------------------------------------------
+
+const modal = {
+  overlay: document.getElementById("modal-overlay"),
+  title:   document.getElementById("modal-title"),
+  name:    document.getElementById("f-name"),
+  icon:    document.getElementById("f-icon"),
+  envBox:  document.getElementById("f-env"),
+  wslWrap: document.getElementById("f-conditional-wsl"),
+  wslSel:  document.getElementById("f-wsl-distro"),
+  sshWrap: document.getElementById("f-conditional-ssh"),
+  sshHost: document.getElementById("f-ssh-host"),
+  sshList: document.getElementById("f-ssh-aliases"),
+  folder:  document.getElementById("f-folder"),
+  port:    document.getElementById("f-port"),
+  error:   document.getElementById("modal-error"),
+  cancel:  document.getElementById("modal-cancel"),
+  submit:  document.getElementById("modal-submit"),
+};
+
+let editingId = null;
+
+function setEnv(env) {
+  modal.overlay.dataset.env = env;
+  modal.envBox.querySelectorAll("label").forEach((l) =>
+    l.classList.toggle("active", l.dataset.env === env));
+  modal.wslWrap.classList.toggle("hidden", env !== "wsl");
+  modal.sshWrap.classList.toggle("hidden", env !== "ssh");
+}
+
+modal.envBox.addEventListener("click", (ev) => {
+  const lbl = ev.target.closest("label[data-env]");
+  if (lbl) setEnv(lbl.dataset.env);
+});
+
+modal.cancel.addEventListener("click", () => closeModal());
+
+modal.submit.addEventListener("click", async () => {
+  const env = modal.overlay.dataset.env || "wsl";
+  const name = modal.name.value.trim();
+  const icon = modal.icon.value.trim() || "📁";
+  const folder = modal.folder.value.trim();
+  const portRaw = modal.port.value.trim();
+  const wslDistro = env === "wsl" ? modal.wslSel.value.trim() : null;
+  const sshHost   = env === "ssh" ? modal.sshHost.value.trim() : null;
+
+  if (!name)   return showModalError("Name is required.");
+  if (!folder) return showModalError("Folder is required.");
+  if (env === "wsl" && !wslDistro) return showModalError("WSL distro is required.");
+  if (env === "ssh" && !sshHost)   return showModalError("SSH host is required.");
+  if (!isPortValid(portRaw))       return showModalError("Port must be 1024–65535 or empty.");
+
+  const id = editingId || ensureUniqueId(slugify(name));
+  const project = {
+    id, name, icon, env, folder,
+    port: portRaw ? Number(portRaw) : pickDefaultPort(env, id),
+    wsl_distro: wslDistro,
+    ssh_host: sshHost,
+  };
+
+  try {
+    if (editingId) {
+      await backendUpdateProject(project);
+      toast(`Updated: ${name}`);
+    } else {
+      await backendAddProject(project);
+      toast(`Added: ${name}`);
+    }
+    closeModal();
+    await reloadProjects();
+  } catch (e) {
+    showModalError(String(e));
+  }
+});
+
+function showModalError(msg) {
+  modal.error.textContent = msg;
+  modal.error.classList.remove("hidden");
+}
+
+function ensureUniqueId(base) {
+  const taken = new Set(projects.map((p) => p.id));
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+function pickDefaultPort(env, id) {
+  // Pick a port deterministic-ish per id, in the 8090-8189 range.
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  const offset = Math.abs(h) % 100;
+  return 8090 + offset;
+}
+
+async function openModal(mode, project = null) {
+  editingId = mode === "edit" && project ? project.id : null;
+  modal.title.textContent = mode === "edit" ? "Edit project" : "Add project";
+  modal.submit.textContent = mode === "edit" ? "Save" : "Add";
+  modal.error.classList.add("hidden");
+
+  // Populate WSL distro dropdown + SSH alias datalist on every open (cheap).
+  await populateHostHints();
+
+  if (mode === "edit" && project) {
+    modal.name.value = project.name;
+    modal.icon.value = project.icon || "";
+    modal.folder.value = project.folder;
+    modal.port.value = project.port || "";
+    setEnv(project.env);
+    if (project.env === "wsl" && project.wsl_distro) modal.wslSel.value = project.wsl_distro;
+    if (project.env === "ssh" && project.ssh_host)   modal.sshHost.value = project.ssh_host;
+  } else {
+    modal.name.value = "";
+    modal.icon.value = "";
+    modal.folder.value = "";
+    modal.port.value = "";
+    modal.sshHost.value = "";
+    setEnv("wsl");
+  }
+  modal.overlay.classList.remove("hidden");
+  modal.name.focus();
+}
+
+function closeModal() {
+  modal.overlay.classList.add("hidden");
+  editingId = null;
+}
+
+async function populateHostHints() {
+  // WSL distros
+  modal.wslSel.innerHTML = "";
+  let distros = [];
+  try { distros = await backendListWslDistros(); } catch { distros = []; }
+  if (!distros.length) distros = ["Ubuntu"];
+  distros.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d; opt.textContent = d;
+    modal.wslSel.appendChild(opt);
+  });
+
+  // SSH aliases
+  modal.sshList.innerHTML = "";
+  let aliases = [];
+  try { aliases = await backendListSshAliases(); } catch { aliases = []; }
+  aliases.forEach((a) => {
+    const opt = document.createElement("option");
+    opt.value = a;
+    modal.sshList.appendChild(opt);
+  });
+}
+
+// ---- Context menu ---------------------------------------------------------
+
+const ctxMenu = document.getElementById("ctx-menu");
+let ctxTargetId = null;
+
+function openContextMenu(x, y, projectId) {
+  ctxTargetId = projectId;
+  ctxMenu.style.left = `${x}px`;
+  ctxMenu.style.top  = `${y}px`;
+  ctxMenu.classList.remove("hidden");
+}
+
+function closeContextMenu() {
+  ctxMenu.classList.add("hidden");
+  ctxTargetId = null;
+}
+
+ctxMenu.addEventListener("click", async (ev) => {
+  const item = ev.target.closest(".item");
+  if (!item || !ctxTargetId) return;
+  const action = item.dataset.action;
+  const id = ctxTargetId;
+  closeContextMenu();
+  const project = projects.find((p) => p.id === id);
+  if (!project) return;
+
+  switch (action) {
+    case "edit":
+      openModal("edit", project);
+      break;
+    case "move-left":
+    case "move-right": {
+      const idx = projects.findIndex((p) => p.id === id);
+      const newIdx = action === "move-left" ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= projects.length) break;
+      [projects[idx], projects[newIdx]] = [projects[newIdx], projects[idx]];
+      try {
+        await backendReorderProjects(projects.map((p) => p.id));
+        buildTabBar();
+      } catch (e) {
+        toast(`Reorder failed: ${e}`);
+        await reloadProjects();
+      }
+      break;
+    }
+    case "remove":
+      openConfirmRemove(project);
+      break;
+  }
+});
+
+window.addEventListener("click", (ev) => {
+  if (!ctxMenu.contains(ev.target)) closeContextMenu();
+});
+window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    closeContextMenu();
+    closeModal();
+    closeConfirm();
+  }
+});
+
+// ---- Confirm dialog (remove) ---------------------------------------------
+
+const confirmDlg = {
+  overlay: document.getElementById("confirm-overlay"),
+  message: document.getElementById("confirm-message"),
+  cancel:  document.getElementById("confirm-cancel"),
+  ok:      document.getElementById("confirm-ok"),
+};
+let confirmAction = null;
+
+function openConfirmRemove(project) {
+  confirmDlg.message.textContent =
+    `Remove "${project.name}" from vstabs?\n\nThis stops the backend if running, ` +
+    `but does not delete any files in ${project.folder}.`;
+  confirmAction = async () => {
+    try {
+      await backendRemoveProject(project.id);
+      delete tabState[project.id];
+      delete effectivePort[project.id];
+      const iframe = iframeEls[project.id];
+      if (iframe) { iframe.remove(); delete iframeEls[project.id]; }
+      if (activeId === project.id) {
+        activeId = null;
+        emptyEl.classList.toggle("hidden", projects.length > 1);
+      }
+      toast(`Removed: ${project.name}`);
+      await reloadProjects();
+    } catch (e) {
+      toast(`Remove failed: ${e}`);
+    }
+  };
+  confirmDlg.overlay.classList.remove("hidden");
+}
+
+function closeConfirm() {
+  confirmDlg.overlay.classList.add("hidden");
+  confirmAction = null;
+}
+
+confirmDlg.cancel.addEventListener("click", closeConfirm);
+confirmDlg.ok.addEventListener("click", async () => {
+  const fn = confirmAction;
+  closeConfirm();
+  if (fn) await fn();
+});
+
+// ---- Empty-state CTA + hotkeys -------------------------------------------
+
+document.getElementById("empty-cta").addEventListener("click", () => openModal("add"));
+
+window.addEventListener("keydown", (ev) => {
+  if (ev.ctrlKey && ev.altKey && /^Digit[1-9]$/.test(ev.code)) {
+    const n = parseInt(ev.code.slice(-1), 10);
     const project = projects[n - 1];
     if (project) {
       activate(project.id);
-      e.preventDefault();
+      ev.preventDefault();
     }
   }
 });
 
-// ---- Boot ----------------------------------------------------------------
+// ---- Boot -----------------------------------------------------------------
 
-async function boot() {
+async function reloadProjects() {
   try {
     projects = await backendListProjects();
   } catch (e) {
@@ -218,14 +503,23 @@ async function boot() {
     projects = [];
   }
   if (!projects.length) {
-    document.title = "vstabs (no projects)";
+    document.title = "vstabs";
+    setFavicon("📁");
+    emptyEl.classList.remove("hidden");
+    tabbar.innerHTML = "";
+    // Still need a "+" button so the user can add the first project from the bar too.
+    const addBtn = document.createElement("button");
+    addBtn.className = "add";
+    addBtn.title = "Add project";
+    addBtn.textContent = "+";
+    addBtn.addEventListener("click", () => openModal("add"));
+    tabbar.appendChild(addBtn);
     return;
   }
-  projects.forEach(buildTab);
-  buildAddButton();
-  buildSpacerAndMeta();
-  renderMeta();
-  await activate(projects[0].id);
+  buildTabBar();
+  // Activate the first project unless the active one is still in the list.
+  const target = projects.find((p) => p.id === activeId) || projects[0];
+  await activate(target.id);
 }
 
-boot();
+reloadProjects();

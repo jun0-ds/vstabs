@@ -6,10 +6,89 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
 <nav id="tabbar"></nav>
+
 <main id="content">
-  <div id="empty-state">No project selected</div>
+  <div id="empty-state">
+    <h2>Welcome to vstabs</h2>
+    <p>No projects yet — let's add one.</p>
+    <button id="empty-cta" class="cta">+ Add your first project</button>
+  </div>
 </main>
+
+<!-- Project add/edit modal -->
+<div id="modal-overlay" class="modal-overlay hidden" data-mode="add">
+  <div class="modal" role="dialog" aria-labelledby="modal-title">
+    <h3 id="modal-title">Add project</h3>
+
+    <div class="row">
+      <div class="grow">
+        <label>Name</label>
+        <input id="f-name" type="text" placeholder="my-project" maxlength="40" />
+      </div>
+      <div style="flex: 0 0 80px;">
+        <label>Icon</label>
+        <input id="f-icon" type="text" placeholder="📁" maxlength="4" />
+      </div>
+    </div>
+
+    <label>Environment</label>
+    <div class="env-radio" id="f-env">
+      <label data-env="local">Local</label>
+      <label data-env="wsl" class="active">WSL</label>
+      <label data-env="ssh">SSH</label>
+    </div>
+
+    <div id="f-conditional-wsl" class="conditional">
+      <label>WSL distro</label>
+      <select id="f-wsl-distro"></select>
+      <div class="hint">populated from <code>wsl -l --quiet</code></div>
+    </div>
+
+    <div id="f-conditional-ssh" class="conditional hidden">
+      <label>SSH host</label>
+      <input id="f-ssh-host" type="text" list="f-ssh-aliases" placeholder="my-remote-host" />
+      <datalist id="f-ssh-aliases"></datalist>
+      <div class="hint">suggestions from <code>~/.ssh/config</code> Host aliases — also accepts new names</div>
+    </div>
+
+    <label>Folder</label>
+    <input id="f-folder" type="text" placeholder="/home/your-user/projects/my-project" />
+
+    <label>Port (optional — auto if empty)</label>
+    <input id="f-port" type="number" min="1024" max="65535" placeholder="auto" />
+
+    <div id="modal-error" class="error hidden"></div>
+
+    <div class="actions">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-submit" class="primary">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Context menu (tab right-click) -->
+<div id="ctx-menu" class="ctx-menu hidden">
+  <div class="item" data-action="edit">📝 Edit project…</div>
+  <div class="item" data-action="move-left">↑ Move left</div>
+  <div class="item" data-action="move-right">↓ Move right</div>
+  <div class="sep"></div>
+  <div class="item danger" data-action="remove">🗑 Remove project</div>
+</div>
+
+<!-- Confirm dialog (used for remove) -->
+<div id="confirm-overlay" class="modal-overlay hidden">
+  <div class="modal" role="alertdialog">
+    <h3 id="confirm-title">Confirm</h3>
+    <p id="confirm-message" class="confirm-message"></p>
+    <div class="actions">
+      <button id="confirm-cancel">Cancel</button>
+      <button id="confirm-ok" class="primary danger-btn">Remove</button>
+    </div>
+  </div>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>

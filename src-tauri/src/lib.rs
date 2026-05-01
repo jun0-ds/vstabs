@@ -1,19 +1,13 @@
-// vstabs v0.1 — Tauri shell + per-project code-server lifecycle.
+// vstabs — Tauri shell + per-project code-server lifecycle.
 //
-// Step 1 scope (this commit):
-//   - Container window with embedded HTML/JS UI (iframe-based tab model)
-//   - list_projects   — return registered projects (hardcoded for step 1, JSON in v0.2)
-//   - spawn_server    — launch code-server for a project (local Win or WSL distro)
-//   - stop_server     — kill a code-server child process
-//   - server_status   — list which projects currently have a live backend
-//
-// Out of scope for step 1 (deferred):
-//   - native multi-WebView2 (iframe is enough for the model — see spike Phase 1b verification)
-//   - lazy spawn / idle suspend
-//   - JSON-backed registry + add-project form
-//   - global hotkeys via tauri-plugin-global-shortcut
-//   - SSH backend
-//   - extension state migration / per-project --user-data-dir
+// Step 1 (✅ shipped): container window, list_projects, spawn/stop/status,
+//   cleanup on close. Lazy spawn on first tab click.
+// v0.2 D (✅ shipped): SSH backend with `-tt`+stdin-piped+SIGHUP-trap so the
+//   ssh client's lifetime owns both the tunnel and the remote code-server.
+// v0.2 A (this revision): JSON-backed registry at %APPDATA%\vstabs\projects.json
+//   plus add/update/remove/reorder commands and host-introspection helpers
+//   (WSL distro list, SSH alias list) so the UI can build a real Add Project
+//   form. Hardcoded `sample_projects()` is kept for tests only.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,6 +16,7 @@ use tauri::{Manager, State};
 
 mod registry;
 mod servers;
+mod sysinfo;
 
 use servers::{spawn_for, ServerHandle};
 
@@ -51,10 +46,61 @@ pub struct ServerStatus {
     pub running: bool,
 }
 
+// ---- Project registry commands -------------------------------------------
+
 #[tauri::command]
-fn list_projects() -> Vec<Project> {
-    registry::default_projects()
+fn list_projects() -> Result<Vec<Project>, String> {
+    registry::load_or_create()
+        .map(|f| f.projects)
+        .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+fn add_project(project: Project) -> Result<(), String> {
+    let mut file = registry::load_or_create().map_err(|e| e.to_string())?;
+    registry::add(&mut file, project).map_err(|e| e.to_string())?;
+    registry::save(&file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_project(project: Project) -> Result<(), String> {
+    let mut file = registry::load_or_create().map_err(|e| e.to_string())?;
+    registry::update(&mut file, project).map_err(|e| e.to_string())?;
+    registry::save(&file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<(), String> {
+    // Kill backend if it's running so we don't leak.
+    {
+        let mut servers = state.servers.lock().unwrap();
+        if let Some(mut h) = servers.remove(&project_id) {
+            let _ = h.kill();
+        }
+    }
+    let mut file = registry::load_or_create().map_err(|e| e.to_string())?;
+    registry::remove(&mut file, &project_id).map_err(|e| e.to_string())?;
+    registry::save(&file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn reorder_projects(ordered_ids: Vec<String>) -> Result<(), String> {
+    let mut file = registry::load_or_create().map_err(|e| e.to_string())?;
+    registry::reorder(&mut file, ordered_ids).map_err(|e| e.to_string())?;
+    registry::save(&file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_wsl_distros() -> Vec<String> {
+    sysinfo::list_wsl_distros()
+}
+
+#[tauri::command]
+fn list_ssh_aliases() -> Vec<String> {
+    sysinfo::list_ssh_aliases()
+}
+
+// ---- code-server lifecycle commands --------------------------------------
 
 #[tauri::command]
 async fn spawn_server(
@@ -64,8 +110,6 @@ async fn spawn_server(
     {
         let servers = state.servers.lock().unwrap();
         if let Some(h) = servers.get(&project.id) {
-            // Backend already alive — return the port the WebView should connect to.
-            // For SSH this is the local forwarded port, not project.port (remote port).
             return Ok(ServerStatus {
                 project_id: project.id,
                 port: h.port,
@@ -110,13 +154,21 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
+            // registry CRUD
             list_projects,
+            add_project,
+            update_project,
+            remove_project,
+            reorder_projects,
+            // host introspection
+            list_wsl_distros,
+            list_ssh_aliases,
+            // code-server lifecycle
             spawn_server,
             stop_server,
             server_status,
         ])
         .on_window_event(|window, event| {
-            // Cleanup all spawned servers on close so we don't leak processes.
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(state) = window.app_handle().try_state::<AppState>() {
                     if let Ok(mut servers) = state.servers.lock() {
