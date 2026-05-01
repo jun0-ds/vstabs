@@ -87,11 +87,6 @@ function slugify(s) {
     .slice(0, 40) || "project";
 }
 
-function isPortValid(p) {
-  if (p === "" || p == null) return true;
-  const n = Number(p);
-  return Number.isInteger(n) && n >= 1024 && n <= 65535;
-}
 
 // ---- Tab status -----------------------------------------------------------
 
@@ -123,12 +118,14 @@ async function ensureBackend(project) {
 }
 
 function showIframe(project) {
-  const port = effectivePort[project.id] ?? project.port;
+  const port = effectivePort[project.id];
   let iframe = iframeEls[project.id];
   if (!iframe) {
     iframe = document.createElement("iframe");
     iframe.dataset.id = project.id;
-    iframe.src = `http://127.0.0.1:${port}/?folder=${encodeURIComponent(project.folder)}`;
+    // No ?folder= — code-server restores the last-opened workspace from its
+    // per-tab --user-data-dir, or shows the empty Welcome screen for first run.
+    iframe.src = `http://127.0.0.1:${port}/`;
     content.appendChild(iframe);
     iframeEls[project.id] = iframe;
   }
@@ -228,12 +225,12 @@ const modal = {
   sshWrap: document.getElementById("f-conditional-ssh"),
   sshHost: document.getElementById("f-ssh-host"),
   sshList: document.getElementById("f-ssh-aliases"),
-  folder:  document.getElementById("f-folder"),
-  port:    document.getElementById("f-port"),
   error:   document.getElementById("modal-error"),
   cancel:  document.getElementById("modal-cancel"),
   submit:  document.getElementById("modal-submit"),
 };
+
+const ENV_DEFAULT_ICON = { local: "🏠", wsl: "🐧", ssh: "☁️" };
 
 let editingId = null;
 
@@ -254,23 +251,17 @@ modal.cancel.addEventListener("click", () => closeModal());
 
 modal.submit.addEventListener("click", async () => {
   const env = modal.overlay.dataset.env || "wsl";
-  const name = modal.name.value.trim();
-  const icon = modal.icon.value.trim() || "📁";
-  const folder = modal.folder.value.trim();
-  const portRaw = modal.port.value.trim();
+  const name = modal.name.value.trim() || autoNextName();
+  const icon = modal.icon.value.trim() || ENV_DEFAULT_ICON[env] || "📁";
   const wslDistro = env === "wsl" ? modal.wslSel.value.trim() : null;
   const sshHost   = env === "ssh" ? modal.sshHost.value.trim() : null;
 
-  if (!name)   return showModalError("Name is required.");
-  if (!folder) return showModalError("Folder is required.");
   if (env === "wsl" && !wslDistro) return showModalError("WSL distro is required.");
   if (env === "ssh" && !sshHost)   return showModalError("SSH host is required.");
-  if (!isPortValid(portRaw))       return showModalError("Port must be 1024–65535 or empty.");
 
   const id = editingId || ensureUniqueId(slugify(name));
   const project = {
-    id, name, icon, env, folder,
-    port: portRaw ? Number(portRaw) : pickDefaultPort(env, id),
+    id, name, icon, env,
     wsl_distro: wslDistro,
     ssh_host: sshHost,
   };
@@ -290,6 +281,17 @@ modal.submit.addEventListener("click", async () => {
   }
 });
 
+function autoNextName() {
+  const base = "Untitled";
+  const taken = new Set(projects.map((p) => p.name));
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base} ${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base} ${Date.now()}`;
+}
+
 function showModalError(msg) {
   modal.error.textContent = msg;
   modal.error.classList.remove("hidden");
@@ -305,14 +307,6 @@ function ensureUniqueId(base) {
   return `${base}-${Date.now()}`;
 }
 
-function pickDefaultPort(env, id) {
-  // Pick a port deterministic-ish per id, in the 8090-8189 range.
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-  const offset = Math.abs(h) % 100;
-  return 8090 + offset;
-}
-
 async function openModal(mode, project = null) {
   editingId = mode === "edit" && project ? project.id : null;
   modal.title.textContent = mode === "edit" ? "Edit project" : "Add project";
@@ -325,16 +319,12 @@ async function openModal(mode, project = null) {
   if (mode === "edit" && project) {
     modal.name.value = project.name;
     modal.icon.value = project.icon || "";
-    modal.folder.value = project.folder;
-    modal.port.value = project.port || "";
     setEnv(project.env);
     if (project.env === "wsl" && project.wsl_distro) modal.wslSel.value = project.wsl_distro;
     if (project.env === "ssh" && project.ssh_host)   modal.sshHost.value = project.ssh_host;
   } else {
     modal.name.value = "";
     modal.icon.value = "";
-    modal.folder.value = "";
-    modal.port.value = "";
     modal.sshHost.value = "";
     setEnv("wsl");
   }
@@ -444,8 +434,9 @@ let confirmAction = null;
 
 function openConfirmRemove(project) {
   confirmDlg.message.textContent =
-    `Remove "${project.name}" from vstabs?\n\nThis stops the backend if running, ` +
-    `but does not delete any files in ${project.folder}.`;
+    `Remove "${project.name}" from vstabs?\n\nStops the backend if running and ` +
+    `deletes the per-tab vscode user-data-dir. The folders you opened inside ` +
+    `vscode are not touched.`;
   confirmAction = async () => {
     try {
       await backendRemoveProject(project.id);

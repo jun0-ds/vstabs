@@ -53,11 +53,10 @@
       <div class="hint">suggestions from <code>~/.ssh/config</code> Host aliases — also accepts new names</div>
     </div>
 
-    <label>Folder</label>
-    <input id="f-folder" type="text" placeholder="/home/your-user/projects/my-project" />
-
-    <label>Port (optional — auto if empty)</label>
-    <input id="f-port" type="number" min="1024" max="65535" placeholder="auto" />
+    <p class="folder-hint">📁 Folder is opened from inside VS Code itself
+      (File → Open Folder). This tab launches an empty editor window — vstabs
+      remembers each tab's last-opened folder per <code>--user-data-dir</code>.
+    </p>
 
     <div id="modal-error" class="error hidden"></div>
 

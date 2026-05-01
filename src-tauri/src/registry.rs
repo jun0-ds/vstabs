@@ -21,7 +21,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Error)]
 pub enum RegistryError {
@@ -148,8 +148,6 @@ pub fn sample_projects() -> Vec<Project> {
             name: "sample-local".into(),
             icon: "🏠".into(),
             env: "local".into(),
-            port: 8080,
-            folder: "C:\\Projects\\sample-local".into(),
             wsl_distro: None,
             ssh_host: None,
         },
@@ -158,8 +156,6 @@ pub fn sample_projects() -> Vec<Project> {
             name: "sample-wsl".into(),
             icon: "🐧".into(),
             env: "wsl".into(),
-            port: 8081,
-            folder: "/home/your-user/sample-wsl".into(),
             wsl_distro: Some("Ubuntu".into()),
             ssh_host: None,
         },

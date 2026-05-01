@@ -1,22 +1,27 @@
-// code-server lifecycle — spawn one backend per project.
+// code-server lifecycle — spawn one backend per project tab.
+//
+// v0.2 A redesign: each spawn uses a per-tab `--user-data-dir` so vscode
+// remembers its own last-opened workspace, sidebar layout, and per-tab
+// extensions. No `folder` argument is passed — the user opens the folder
+// from inside vscode (File → Open Folder), and code-server restores it on
+// the next spawn.
 //
 // Three transport models:
 //
-//   "local" — spawn code-server.exe (or ~/.local/bin/code-server) directly on
-//   the host where vstabs runs. Bound to 127.0.0.1:{port}.
+//   "local" — spawn code-server.exe (or ~/.local/bin/code-server) directly
+//   on the host where vstabs runs. Bound to 127.0.0.1:{auto-port}.
 //
 //   "wsl"   — on Windows host, invoke `wsl -d {distro} bash -c "..."` so the
-//   server runs inside the WSL distro and binds 127.0.0.1:{port}. WSL2
-//   auto-forwards localhost ports to Windows. On Linux/macOS host, the "wsl"
-//   env falls back to "local" (we are already on the same kernel as the path).
+//   server runs inside the WSL distro and binds 127.0.0.1:{auto-port}. WSL2
+//   auto-forwards localhost ports to Windows. On Linux/macOS host the "wsl"
+//   env falls back to "local".
 //
 //   "ssh"   — open an SSH connection to a remote host through the user's ssh
-//   client config (Tailscale-resolved hostname assumed; see
-//   ops-config/docs/architecture.md). Allocate a free local port, set up an
-//   `-L {local}:127.0.0.1:{remote}` port forward, and run code-server on the
-//   remote bound to 127.0.0.1:{remote}. The ssh client's lifetime owns both
-//   the tunnel and the remote code-server (no nohup/detach), so killing the
-//   ssh child cleans up everything.
+//   client config (Tailscale-resolved alias assumed). Allocate a free local
+//   port, set up `-L {local}:127.0.0.1:{remote}` port forward, run code-server
+//   on the remote bound to 127.0.0.1:{remote}. The ssh client's lifetime
+//   owns both the tunnel and the remote process (`-tt` + bash trap →
+//   SIGHUP propagates on client kill, no orphans).
 //
 // VS Code's IPC env vars (VSCODE_IPC_HOOK_CLI etc.) hijack code-server into
 // "open in existing instance" mode, so we strip them before spawn on every
@@ -41,8 +46,8 @@ pub enum SpawnError {
 
 pub struct ServerHandle {
     /// Port the WebView should connect to on 127.0.0.1.
-    /// For local/wsl this equals project.port. For ssh this is the local end
-    /// of the SSH `-L` forward (allocated dynamically).
+    /// For local/wsl this is the auto-allocated free port.
+    /// For ssh this is the local end of the SSH `-L` forward.
     pub port: u16,
     pub child: Child,
 }
@@ -55,48 +60,49 @@ impl ServerHandle {
 
 pub fn spawn_for(project: &Project) -> Result<ServerHandle, SpawnError> {
     match project.env.as_str() {
-        "wsl" => {
-            let child = spawn_wsl_or_local(project)?;
-            Ok(ServerHandle {
-                port: project.port,
-                child,
-            })
-        }
+        "wsl" => spawn_wsl_or_local(project),
         "local" => {
-            let child = spawn_local(project.port, &project.folder)?;
-            Ok(ServerHandle {
-                port: project.port,
-                child,
-            })
+            let port = allocate_free_local_port()?;
+            let child = spawn_local(port, &project.id)?;
+            Ok(ServerHandle { port, child })
         }
         "ssh" => spawn_ssh(project),
         other => Err(SpawnError::UnsupportedEnv(other.into())),
     }
 }
 
-// On Windows: a "wsl" project means cross the boundary via `wsl -d {distro}`.
-// On Linux/macOS: we *are* the native host; treat "wsl" the same as "local"
-// (the build is being run inside WSL or on Linux, so the path is reachable
-// directly). This makes Linux dev builds usable for UI/lifecycle verification.
-fn spawn_wsl_or_local(project: &Project) -> std::io::Result<Child> {
+fn spawn_wsl_or_local(project: &Project) -> Result<ServerHandle, SpawnError> {
     #[cfg(windows)]
     {
-        let distro = project.wsl_distro.as_deref().unwrap_or("Ubuntu");
-        return spawn_wsl(distro, project.port, &project.folder);
+        let distro = project
+            .wsl_distro
+            .as_deref()
+            .ok_or(SpawnError::MissingDistro)?;
+        let port = allocate_free_local_port()?;
+        let child = spawn_wsl(distro, port, &project.id)?;
+        Ok(ServerHandle { port, child })
     }
     #[cfg(not(windows))]
     {
-        spawn_local(project.port, &project.folder)
+        let _ = project; // distro unused on non-Windows
+        let port = allocate_free_local_port()?;
+        let child = spawn_local(port, &project.id)?;
+        Ok(ServerHandle { port, child })
     }
 }
 
 #[cfg(windows)]
-fn spawn_wsl(distro: &str, port: u16, folder: &str) -> std::io::Result<Child> {
+fn spawn_wsl(distro: &str, port: u16, tab_id: &str) -> std::io::Result<Child> {
+    // Per-tab user-data-dir inside the WSL distro keeps each tab's vscode
+    // state (last folder, sidebar, extensions) isolated.
+    let user_data = format!("~/.local/share/vstabs/backends/{}", tab_id);
     let inner = format!(
-        "env -u VSCODE_IPC_HOOK_CLI -u VSCODE_IPC_HOOK -u VSCODE_PID -u VSCODE_CWD \
-         ~/.local/bin/code-server --bind-addr 127.0.0.1:{} --auth none {}",
-        port,
-        shell_quote(folder)
+        "mkdir -p {udd_q} && \
+         env -u VSCODE_IPC_HOOK_CLI -u VSCODE_IPC_HOOK -u VSCODE_PID -u VSCODE_CWD \
+         ~/.local/bin/code-server --bind-addr 127.0.0.1:{port} --auth none \
+         --user-data-dir {udd_q}",
+        udd_q = shell_quote(&user_data),
+        port = port,
     );
     let mut cmd = Command::new("wsl");
     cmd.args(["-d", distro, "bash", "-c", &inner])
@@ -107,15 +113,20 @@ fn spawn_wsl(distro: &str, port: u16, folder: &str) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
-fn spawn_local(port: u16, folder: &str) -> std::io::Result<Child> {
+fn spawn_local(port: u16, tab_id: &str) -> std::io::Result<Child> {
     let bin = which_code_server();
+    let user_data = local_user_data_dir(tab_id);
+    if let Some(parent) = std::path::Path::new(&user_data).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let mut cmd = Command::new(&bin);
     cmd.args([
         "--bind-addr",
         &format!("127.0.0.1:{}", port),
         "--auth",
         "none",
-        folder,
+        "--user-data-dir",
+        &user_data,
     ])
     .env_remove("VSCODE_IPC_HOOK_CLI")
     .env_remove("VSCODE_IPC_HOOK")
@@ -134,56 +145,41 @@ fn spawn_ssh(project: &Project) -> Result<ServerHandle, SpawnError> {
         .as_deref()
         .ok_or(SpawnError::MissingSshHost)?;
     let local_port = allocate_free_local_port()?;
-    let remote_port = project.port;
-    let folder = &project.folder;
+    let remote_port = derive_remote_port(&project.id);
+    let user_data = format!("~/.local/share/vstabs/backends/{}", project.id);
 
-    // The remote command runs inside a bash subshell that:
-    //   1. Strips VS Code IPC env vars (else code-server hijacks an existing instance)
-    //   2. Installs a TERM/HUP trap that kills the whole process group on signal
-    //   3. Backgrounds code-server, captures its PID, then `wait`s
-    //
-    // Combined with `ssh -tt` below, this makes ssh client death cleanly
-    // SIGHUP the remote process tree — verified end-to-end against two SSH hosts
-    // (2026-05-01 spike).
+    // Remote command:
+    //   1. mkdir -p user-data-dir
+    //   2. Strip VS Code IPC env (else code-server hijacks an existing instance)
+    //   3. Trap TERM/HUP/INT to kill the whole process group on signal
+    //   4. Background code-server, capture pid, wait
     let inner = format!(
         "exec env -u VSCODE_IPC_HOOK_CLI -u VSCODE_IPC_HOOK -u VSCODE_PID -u VSCODE_CWD \
-         bash -c 'trap \"kill -TERM 0\" SIGTERM SIGHUP SIGINT; \
-                  ~/.local/bin/code-server --bind-addr 127.0.0.1:{} --auth none {} & \
+         bash -c 'mkdir -p {udd_q}; \
+                  trap \"kill -TERM 0\" SIGTERM SIGHUP SIGINT; \
+                  ~/.local/bin/code-server --bind-addr 127.0.0.1:{rp} --auth none \
+                    --user-data-dir {udd_q} & \
                   CSPID=$!; wait $CSPID'",
-        remote_port,
-        shell_quote(folder)
+        udd_q = shell_quote(&user_data),
+        rp = remote_port,
     );
 
     let mut cmd = Command::new("ssh");
     cmd.args([
-        // Local port forward: bind 127.0.0.1:{local} on this machine, forward
-        // to 127.0.0.1:{remote} on the SSH host (where code-server will bind).
         "-L",
         &format!("127.0.0.1:{}:127.0.0.1:{}", local_port, remote_port),
-        // -tt: force TTY allocation even though our stdin is piped. Required
-        // for SIGHUP propagation to the remote process when ssh client dies.
-        // Without this, the remote code-server keeps running as an orphan
-        // (verified during the v0.2 D spike).
         "-tt",
-        // Keep the connection alive; client-side detection of dead remotes.
         "-o",
         "ServerAliveInterval=30",
         "-o",
         "ServerAliveCountMax=3",
-        // Don't ask about host keys for first connection — assume tailnet trust
-        // (the user is already on a tailnet to reach this host alias at all).
         "-o",
         "StrictHostKeyChecking=accept-new",
-        // The host alias resolves through the user's ssh config (Tailscale).
         host,
         &inner,
     ])
-    // stdin = piped (NOT null). Windows OpenSSH treats Stdio::null() as
-    // immediate EOF and exits — observed against vstabs.exe on Windows host:
-    // tunnel briefly came up (page loaded once), then ssh died and the iframe
-    // showed "연결이 다시 설정되었습니다" / "connection has been reset".
-    // Piped stdin stays open for the child's lifetime; ssh keeps the channel
-    // alive until vstabs drops the handle (window close → SIGHUP propagation).
+    // Windows OpenSSH treats Stdio::null() as immediate EOF and exits — keep
+    // the pipe open for the child's lifetime.
     .stdin(Stdio::piped())
     .stdout(Stdio::null())
     .stderr(Stdio::null());
@@ -197,26 +193,41 @@ fn spawn_ssh(project: &Project) -> Result<ServerHandle, SpawnError> {
 }
 
 fn allocate_free_local_port() -> std::io::Result<u16> {
-    // Bind to port 0 → OS picks a free port. Drop immediately so we can hand
-    // the port to ssh -L. There's a tiny race window if something else binds
-    // in between, but it's vanishingly small in practice.
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     drop(listener);
     Ok(port)
 }
 
+/// Deterministic per-tab remote port for SSH backends. Re-spawns of the same
+/// tab reuse the same remote port. Range 8090–9089. Collisions across distinct
+/// tab ids on the same host are possible but rare.
+fn derive_remote_port(tab_id: &str) -> u16 {
+    let mut h: u32 = 0;
+    for b in tab_id.bytes() {
+        h = h.wrapping_mul(31).wrapping_add(b as u32);
+    }
+    8090u16.saturating_add((h % 1000) as u16)
+}
+
+fn local_user_data_dir(tab_id: &str) -> String {
+    if let Some(base) = dirs::config_dir() {
+        let p = base.join("vstabs").join("backends").join(tab_id);
+        return p.to_string_lossy().into_owned();
+    }
+    format!("./vstabs-backends/{}", tab_id)
+}
+
 fn hide_console_on_windows(_cmd: &mut Command) {
     #[cfg(windows)]
     {
         // CREATE_NO_WINDOW = 0x08000000 — prevent flashing console on spawn.
-        // tokio::process::Command provides creation_flags directly under cfg(windows).
+        // tokio::process::Command exposes creation_flags directly under cfg(windows).
         _cmd.creation_flags(0x08000000);
     }
 }
 
 fn shell_quote(s: &str) -> String {
-    // Minimal POSIX single-quote escaping.
     let escaped = s.replace('\'', r"'\''");
     format!("'{}'", escaped)
 }

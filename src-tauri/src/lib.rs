@@ -25,14 +25,23 @@ pub struct AppState {
     pub servers: Mutex<HashMap<String, ServerHandle>>,
 }
 
+// v0.2 A redesign:
+// `folder` and `port` are no longer part of the user-facing schema.
+//   - folder: the user opens it from inside VS Code (File → Open Folder).
+//     code-server remembers last-opened workspace per --user-data-dir, so the
+//     next spawn restores it. vstabs is the launcher, vscode is the editor.
+//   - port: vstabs auto-allocates a free local port at spawn time. SSH remote
+//     port is derived deterministically from the tab id so re-spawns reuse
+//     the same remote port.
+// Older v2 registry files that still contain `folder`/`port` fields are
+// silently accepted (serde ignores unknown fields by default) and rewritten
+// in v3 shape on the next save.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Project {
     pub id: String,
     pub name: String,
     pub icon: String,
     pub env: String,
-    pub port: u16,
-    pub folder: String,
     #[serde(default)]
     pub wsl_distro: Option<String>,
     #[serde(default)]

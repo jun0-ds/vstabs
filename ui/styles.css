@@ -150,6 +150,15 @@ iframe.active { display: block; }
   background: #c62828; border-color: #c62828;
 }
 .modal .actions button.danger-btn:hover { background: #d33a3a; }
+.modal .folder-hint {
+  margin-top: 18px; padding: 10px 12px;
+  background: #1e2734; border: 1px solid #2c3e50;
+  border-radius: 3px; font-size: 12px; line-height: 1.5; color: #9bb3c9;
+}
+.modal .folder-hint code {
+  background: #0f1419; padding: 1px 5px; border-radius: 2px;
+  color: #c5d4e0; font-size: 11px;
+}
 .modal .error {
   background: #4a1a1a; border: 1px solid #c62828; color: #f48771;
   padding: 8px 10px; border-radius: 3px; font-size: 12px; margin-top: 14px;
