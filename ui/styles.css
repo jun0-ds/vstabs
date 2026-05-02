@@ -43,6 +43,21 @@ body {
 #tabbar .tab .status-dot.spawning { background: #ffa726; }
 #tabbar .tab .status-dot.failed { background: #f44336; }
 
+#tabbar .tab .close {
+  margin-left: 4px; width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; color: #888;
+  opacity: 0; transition: opacity 0.1s, background 0.1s, color 0.1s;
+  font-size: 14px; line-height: 1;
+}
+#tabbar .tab:hover .close,
+#tabbar .tab.active .close {
+  opacity: 1;
+}
+#tabbar .tab .close:hover {
+  background: #4a2222; color: #f48771;
+}
+
 #tabbar .add {
   background: transparent; border: none; color: #888; cursor: pointer;
   padding: 0 14px; font-size: 18px;

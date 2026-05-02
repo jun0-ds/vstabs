@@ -177,8 +177,17 @@ function buildTabBar() {
       `<span class="status-dot"></span>` +
       `<span class="icon">${project.icon || "📁"}</span>` +
       `<span class="name">${escapeHtml(project.name)}</span>` +
-      `<span class="env-tag">${project.env.toUpperCase()}</span>`;
-    tab.addEventListener("click", () => activate(project.id));
+      `<span class="env-tag">${project.env.toUpperCase()}</span>` +
+      `<span class="close" title="Remove tab">×</span>`;
+    tab.addEventListener("click", (ev) => {
+      // Click on the × goes to remove flow, not activate.
+      if (ev.target.closest(".close")) {
+        ev.stopPropagation();
+        openConfirmRemove(project);
+        return;
+      }
+      activate(project.id);
+    });
     tab.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
       openContextMenu(ev.clientX, ev.clientY, project.id);
