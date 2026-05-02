@@ -276,6 +276,12 @@ modal.submit.addEventListener("click", async () => {
     }
     closeModal();
     await reloadProjects();
+    // For *new* projects, jump straight into the spawn so the user lands on
+    // VS Code's empty Welcome screen and can File → Open Folder immediately.
+    // (For edits we keep whatever was active before.)
+    if (!editingId) {
+      await activate(project.id);
+    }
   } catch (e) {
     showModalError(String(e));
   }
