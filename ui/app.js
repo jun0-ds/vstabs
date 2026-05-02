@@ -483,13 +483,33 @@ confirmDlg.ok.addEventListener("click", async () => {
 // icon auto-fill; right-click → Edit changes them after the fact.
 
 let openAddMenuEl = null;
+let cachedDistros = null;
+let cachedAliases = null;
+let preloadInFlight = null;
+
+function preloadHostHints() {
+  if (preloadInFlight) return preloadInFlight;
+  preloadInFlight = (async () => {
+    const [d, a] = await Promise.all([
+      backendListWslDistros().catch(() => []),
+      backendListSshAliases().catch(() => []),
+    ]);
+    cachedDistros = d || [];
+    cachedAliases = a || [];
+  })();
+  return preloadInFlight;
+}
 
 async function openAddMenu(anchorEl) {
   if (openAddMenuEl) { openAddMenuEl.remove(); openAddMenuEl = null; }
-  const [distros, aliases] = await Promise.all([
-    backendListWslDistros().catch(() => []),
-    backendListSshAliases().catch(() => []),
-  ]);
+  // Use cached host hints if we have them; otherwise wait once for the
+  // in-flight preload (kicked off at boot). First-ever open may still wait
+  // briefly on `wsl -l --quiet`, but every subsequent open is instant.
+  if (cachedDistros == null || cachedAliases == null) {
+    await preloadHostHints();
+  }
+  const distros = cachedDistros || [];
+  const aliases = cachedAliases || [];
   const menu = document.createElement("div");
   menu.className = "add-menu";
   let html = `<div class="item" data-env="local"><span class="glyph">🏠</span><span>Local</span></div>`;
@@ -615,3 +635,5 @@ async function reloadProjects() {
 }
 
 reloadProjects();
+// Warm WSL distro / SSH alias caches in the background so + opens instantly.
+preloadHostHints();

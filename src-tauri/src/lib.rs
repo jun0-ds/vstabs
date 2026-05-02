@@ -18,7 +18,7 @@ mod registry;
 mod servers;
 mod sysinfo;
 
-use servers::{spawn_for, ServerHandle};
+use servers::{spawn_for, wait_port_open, ServerHandle};
 
 #[derive(Default)]
 pub struct AppState {
@@ -128,8 +128,20 @@ async fn spawn_server(
     }
     let handle = spawn_for(&project).map_err(|e| e.to_string())?;
     let effective_port = handle.port;
-    let mut servers = state.servers.lock().unwrap();
-    servers.insert(project.id.clone(), handle);
+    {
+        let mut servers = state.servers.lock().unwrap();
+        servers.insert(project.id.clone(), handle);
+    }
+    // Wait until the backend actually accepts connections — WSL/SSH cold start
+    // takes 5–15s, and returning early causes the WebView to load before the
+    // server is listening (ERR_CONNECTION_REFUSED).
+    let ready = wait_port_open(effective_port, std::time::Duration::from_secs(20)).await;
+    if !ready {
+        return Err(format!(
+            "backend port {} did not become reachable within 20s",
+            effective_port
+        ));
+    }
     Ok(ServerStatus {
         project_id: project.id,
         port: effective_port,

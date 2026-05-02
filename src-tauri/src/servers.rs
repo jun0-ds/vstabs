@@ -199,6 +199,25 @@ fn allocate_free_local_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+/// Block (async) until 127.0.0.1:{port} accepts a TCP connection or `timeout`
+/// elapses. Used right after spawn so the WebView doesn't load before the
+/// code-server backend is actually listening (avoids ERR_CONNECTION_REFUSED).
+pub async fn wait_port_open(port: u16, timeout: std::time::Duration) -> bool {
+    let start = tokio::time::Instant::now();
+    while start.elapsed() < timeout {
+        let probe = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            tokio::net::TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await;
+        if matches!(probe, Ok(Ok(_))) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    false
+}
+
 /// Deterministic per-tab remote port for SSH backends. Re-spawns of the same
 /// tab reuse the same remote port. Range 8090–9089. Collisions across distinct
 /// tab ids on the same host are possible but rare.
