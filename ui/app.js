@@ -188,12 +188,12 @@ function buildTabBar() {
     setStatus(project.id, tabState[project.id] || "idle");
   });
 
-  // "+" button
+  // "+" button — opens quick-add dropdown (no modal)
   const addBtn = document.createElement("button");
   addBtn.className = "add";
   addBtn.title = "Add project";
   addBtn.textContent = "+";
-  addBtn.addEventListener("click", () => openModal("add"));
+  addBtn.addEventListener("click", (ev) => openAddMenu(ev.currentTarget));
   tabbar.appendChild(addBtn);
 
   // Spacer + meta
@@ -475,9 +475,104 @@ confirmDlg.ok.addEventListener("click", async () => {
   if (fn) await fn();
 });
 
+// ---- Quick-add dropdown ---------------------------------------------------
+//
+// `+` (or empty-state CTA) opens this menu instead of a full modal. The user
+// picks an env (Local / a specific WSL distro / a specific SSH host alias /
+// SSH custom), and we go straight from click to spawn-and-activate. Name and
+// icon auto-fill; right-click → Edit changes them after the fact.
+
+let openAddMenuEl = null;
+
+async function openAddMenu(anchorEl) {
+  if (openAddMenuEl) { openAddMenuEl.remove(); openAddMenuEl = null; }
+  const [distros, aliases] = await Promise.all([
+    backendListWslDistros().catch(() => []),
+    backendListSshAliases().catch(() => []),
+  ]);
+  const menu = document.createElement("div");
+  menu.className = "add-menu";
+  let html = `<div class="item" data-env="local"><span class="glyph">🏠</span><span>Local</span></div>`;
+  if (distros.length) {
+    html += `<div class="sep"></div><div class="group-label">WSL distros</div>`;
+    for (const d of distros) {
+      html += `<div class="item" data-env="wsl" data-distro="${escapeAttr(d)}">` +
+              `<span class="glyph">🐧</span><span>${escapeHtml(d)}</span></div>`;
+    }
+  }
+  if (aliases.length) {
+    html += `<div class="sep"></div><div class="group-label">SSH hosts</div>`;
+    for (const a of aliases) {
+      html += `<div class="item" data-env="ssh" data-host="${escapeAttr(a)}">` +
+              `<span class="glyph">☁️</span><span>${escapeHtml(a)}</span></div>`;
+    }
+  }
+  html += `<div class="sep"></div>` +
+          `<div class="item" data-env="ssh-custom"><span class="glyph">☁️</span><span>SSH — Custom…</span></div>`;
+  menu.innerHTML = html;
+
+  const rect = anchorEl.getBoundingClientRect();
+  menu.style.left = `${rect.left}px`;
+  menu.style.top  = `${rect.bottom + 2}px`;
+  document.body.appendChild(menu);
+  openAddMenuEl = menu;
+
+  menu.addEventListener("click", async (ev) => {
+    const item = ev.target.closest(".item");
+    if (!item) return;
+    const env = item.dataset.env;
+    const distro = item.dataset.distro || null;
+    let host = item.dataset.host || null;
+    closeAddMenu();
+    if (env === "ssh-custom") {
+      const v = prompt("SSH host alias (must be reachable via your ssh config):");
+      if (!v) return;
+      await quickAdd("ssh", null, v.trim());
+      return;
+    }
+    await quickAdd(env, distro, host);
+  });
+
+  // Close on outside click / escape (registered on next tick so the opener
+  // click doesn't immediately dismiss).
+  setTimeout(() => {
+    const dismiss = (ev) => {
+      if (!menu.contains(ev.target)) closeAddMenu();
+    };
+    document.addEventListener("click", dismiss, { once: true });
+  }, 0);
+}
+
+function closeAddMenu() {
+  if (openAddMenuEl) { openAddMenuEl.remove(); openAddMenuEl = null; }
+}
+
+async function quickAdd(env, distro, host) {
+  const name = autoNextName();
+  const icon = ENV_DEFAULT_ICON[env] || "📁";
+  const id = ensureUniqueId(slugify(name));
+  const project = {
+    id, name, icon, env,
+    wsl_distro: distro,
+    ssh_host: host,
+  };
+  try {
+    await backendAddProject(project);
+    toast(`Added: ${name}`);
+    await reloadProjects();
+    await activate(id);
+  } catch (e) {
+    toast(`Add failed: ${e}`);
+  }
+}
+
+function escapeAttr(s) {
+  return s.replace(/"/g, "&quot;").replace(/&/g, "&amp;");
+}
+
 // ---- Empty-state CTA + hotkeys -------------------------------------------
 
-document.getElementById("empty-cta").addEventListener("click", () => openModal("add"));
+document.getElementById("empty-cta").addEventListener("click", (ev) => openAddMenu(ev.currentTarget));
 
 window.addEventListener("keydown", (ev) => {
   if (ev.ctrlKey && ev.altKey && /^Digit[1-9]$/.test(ev.code)) {
@@ -509,7 +604,7 @@ async function reloadProjects() {
     addBtn.className = "add";
     addBtn.title = "Add project";
     addBtn.textContent = "+";
-    addBtn.addEventListener("click", () => openModal("add"));
+    addBtn.addEventListener("click", (ev) => openAddMenu(ev.currentTarget));
     tabbar.appendChild(addBtn);
     return;
   }
